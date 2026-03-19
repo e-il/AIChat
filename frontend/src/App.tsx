@@ -74,6 +74,13 @@ function App() {
     loadConversations();
   }, [isAuthenticated, handleAuthError, loadConversations]);
 
+  // Update document title based on active conversation
+  useEffect(() => {
+    document.title = activeConversation?.title 
+      ? `AIChat - ${activeConversation.title}`
+      : 'AIChat';
+  }, [activeConversation?.title]);
+
   // Wire up SignalR callbacks
   useEffect(() => {
     setOnMessageAdded((conversationId, message) => {
