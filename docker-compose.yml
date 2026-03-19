@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: ./backend/AIChat.Api
+      dockerfile: Dockerfile
+    container_name: aichat-backend
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - AzureOpenAI__Endpoint=${AZURE_OPENAI_ENDPOINT}
+      - AzureOpenAI__ApiKey=${AZURE_OPENAI_API_KEY}
+      - AuthCodes__0=${AUTH_CODE_1:-demo123}
+      - AuthCodes__1=${AUTH_CODE_2:-admin456}
+      - AuthCodes__2=${AUTH_CODE_3:-user789}
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: aichat-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
