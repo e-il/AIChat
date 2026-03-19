@@ -1,0 +1,189 @@
+@import "tailwindcss";
+
+@theme {
+  /* Azure DevOps Colors */
+  --color-primary-50: #E6F2FF;
+  --color-primary-100: #CCE4FF;
+  --color-primary-200: #99CAFF;
+  --color-primary-300: #66AFFF;
+  --color-primary-400: #3395FF;
+  --color-primary-500: #0078D4;
+  --color-primary-600: #006CBE;
+  --color-primary-700: #005A9E;
+  --color-primary-800: #004578;
+  --color-primary-900: #003052;
+  
+  /* ADO Header/Nav Dark */
+  --color-header: #0078D4;
+  --color-header-dark: #005A9E;
+  --color-nav-bg: #2B2B2B;
+  --color-nav-hover: #3D3D3D;
+  
+  /* ADO Neutral/Background */
+  --color-neutral-50: #FAFAFA;
+  --color-neutral-100: #F4F4F4;
+  --color-neutral-200: #E8E8E8;
+  --color-neutral-300: #D0D0D0;
+  --color-neutral-400: #A0A0A0;
+  --color-neutral-500: #6E6E6E;
+  --color-neutral-600: #4A4A4A;
+  --color-neutral-700: #3B3B3B;
+  --color-neutral-800: #2B2B2B;
+  --color-neutral-900: #1B1B1B;
+  
+  /* ADO Surface */
+  --color-surface: #FFFFFF;
+  --color-surface-alt: #F4F4F4;
+  --color-surface-raised: #FFFFFF;
+  
+  --font-sans: 'Segoe UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #F4F4F4;
+}
+
+#root {
+  display: flex;
+}
+
+/* ADO Header Bar */
+.ado-header {
+  background: linear-gradient(to right, #0078D4, #005A9E);
+  color: white;
+}
+
+/* ADO Sidebar */
+.ado-sidebar {
+  background: #2B2B2B;
+  color: #E8E8E8;
+}
+
+/* ADO Panel */
+.ado-panel {
+  background: #FFFFFF;
+  border: 1px solid #E8E8E8;
+}
+
+/* Fluent Depth Shadows */
+.depth-4 {
+  box-shadow: 0 1.6px 3.6px 0 rgba(0, 0, 0, 0.132), 
+              0 0.3px 0.9px 0 rgba(0, 0, 0, 0.108);
+}
+
+.depth-8 {
+  box-shadow: 0 3.2px 7.2px 0 rgba(0, 0, 0, 0.132), 
+              0 0.6px 1.8px 0 rgba(0, 0, 0, 0.108);
+}
+
+.depth-16 {
+  box-shadow: 0 6.4px 14.4px 0 rgba(0, 0, 0, 0.132), 
+              0 1.2px 3.6px 0 rgba(0, 0, 0, 0.108);
+}
+
+.depth-64 {
+  box-shadow: 0 25.6px 57.6px 0 rgba(0, 0, 0, 0.22), 
+              0 4.8px 14.4px 0 rgba(0, 0, 0, 0.18);
+}
+
+/* Fluent Button Styles */
+.fluent-button {
+  padding: 6px 20px;
+  border-radius: 2px;
+  font-weight: 600;
+  font-size: 14px;
+  transition: all 0.1s ease;
+  border: 1px solid transparent;
+}
+
+.fluent-button-primary {
+  background: #0078D4;
+  color: white;
+  border-color: #0078D4;
+}
+
+.fluent-button-primary:hover {
+  background: #106EBE;
+  border-color: #106EBE;
+}
+
+.fluent-button-primary:active {
+  background: #005A9E;
+  border-color: #005A9E;
+}
+
+/* Scrollbar - ADO Style */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #A0A0A0;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #6E6E6E;
+}
+
+/* Markdown prose styling */
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  font-weight: 600;
+  color: #1B1B1B;
+}
+
+.prose code {
+  background: #F4F4F4;
+  padding: 0.125rem 0.375rem;
+  border-radius: 2px;
+  font-size: 0.875em;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  color: #0078D4;
+}
+
+.prose pre {
+  background: #FAFAFA;
+  color: #1B1B1B;
+  padding: 1rem;
+  border: 1px solid #E8E8E8;
+  overflow-x: auto;
+}
+
+.prose pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.prose ul, .prose ol {
+  padding-left: 1.5rem;
+}
+
+.prose a {
+  color: #0078D4;
+  text-decoration: none;
+}
+
+.prose a:hover {
+  text-decoration: underline;
+}

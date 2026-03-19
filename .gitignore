@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+bin/
+obj/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Environment & Config (contains secrets)
+.env
+.env.local
+backend/AIChat.Api/appsettings.json
+appsettings.Local.json
+appsettings.Development.json
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+screenshot*.png
+test-results/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright
+.playwright/
+
+# .NET
+*.nupkg
+project.lock.json
