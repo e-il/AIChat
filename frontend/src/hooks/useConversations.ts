@@ -84,6 +84,21 @@ export function useConversations() {
     }));
   }, [activeConversation]);
 
+  // Update a temporary message with the real one from server
+  const updateMessage = useCallback((conversationId: string, tempId: string, realMessage: Message) => {
+    if (activeConversation?.id === conversationId) {
+      setActiveConversation(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          messages: prev.messages.map(m => 
+            m.id === tempId ? realMessage : m
+          ),
+        };
+      });
+    }
+  }, [activeConversation]);
+
   return {
     conversations,
     activeConversation,
@@ -93,6 +108,7 @@ export function useConversations() {
     createConversation,
     deleteConversation,
     addMessage,
+    updateMessage,
     setActiveConversation,
   };
 }

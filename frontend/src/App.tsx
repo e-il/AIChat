@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Menu, History } from 'lucide-react';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatArea } from './components/Chat/ChatArea';
@@ -10,7 +10,7 @@ import { useChat } from './hooks/useChat';
 import { chatApi } from './services/chatApi';
 import { hasAuthCode, setAuthCode, clearAuthCode } from './services/auth';
 import { getConversationSettings, saveConversationSettings, deleteConversationSettings } from './services/settings';
-import type { ModelInfo } from './types';
+import type { ModelInfo, Message } from './types';
 import './index.css';
 
 function App() {
@@ -34,7 +34,11 @@ function App() {
     createConversation,
     deleteConversation,
     addMessage,
+    updateMessage,
   } = useConversations();
+
+  // Track temp ID for optimistic user message
+  const pendingUserMessageRef = useRef<{ conversationId: string; tempId: string } | null>(null);
 
   const {
     sendMessage,
@@ -107,13 +111,22 @@ function App() {
   // Wire up SignalR callbacks
   useEffect(() => {
     setOnMessageAdded((conversationId, message) => {
+      // For user messages, update the temp ID with the real one
+      if (message.role === 'user') {
+        const pending = pendingUserMessageRef.current;
+        if (pending && pending.conversationId === conversationId) {
+          updateMessage(conversationId, pending.tempId, message);
+          pendingUserMessageRef.current = null;
+        }
+        return;
+      }
       addMessage(conversationId, message);
     });
     setOnMessageComplete((conversationId, message) => {
       addMessage(conversationId, message);
     });
     setOnAuthError(handleAuthError);
-  }, [setOnMessageAdded, setOnMessageComplete, setOnAuthError, addMessage, handleAuthError]);
+  }, [setOnMessageAdded, setOnMessageComplete, setOnAuthError, addMessage, updateMessage, handleAuthError]);
 
   const handleSelectConversation = (id: string) => {
     loadConversation(id);
@@ -145,14 +158,31 @@ function App() {
   };
 
   const handleSendMessage = async (message: string) => {
+    // Create optimistic user message with temp ID
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMessage: Message = {
+      id: tempId,
+      role: 'user',
+      content: message,
+      timestamp: new Date().toISOString(),
+    };
+
     if (!activeConversation) {
       const newConv = await createConversation();
       if (newConv) {
+        // Track temp ID for updating later
+        pendingUserMessageRef.current = { conversationId: newConv.id, tempId };
+        // Add user message optimistically
+        addMessage(newConv.id, optimisticMessage);
         // Save settings for new conversation
         saveConversationSettings(newConv.id, { maxContextSize: currentContextSize, maxMessages: currentMaxMessages });
         sendMessage(newConv.id, message, selectedModel, currentContextSize, currentMaxMessages);
       }
     } else {
+      // Track temp ID for updating later
+      pendingUserMessageRef.current = { conversationId: activeConversation.id, tempId };
+      // Add user message optimistically
+      addMessage(activeConversation.id, optimisticMessage);
       sendMessage(activeConversation.id, message, selectedModel, currentContextSize, currentMaxMessages);
     }
   };
