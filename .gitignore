@@ -14,13 +14,6 @@ obj/
 *.user
 *.suo
 
-# Environment & Config (contains secrets)
-.env
-.env.local
-backend/AIChat.Api/appsettings.json
-appsettings.Local.json
-appsettings.Development.json
-
 # Logs
 *.log
 logs/
