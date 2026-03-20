@@ -1,21 +1,36 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Menu, ChevronDown } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Menu } from 'lucide-react';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatArea } from './components/Chat/ChatArea';
 import { ChatInput } from './components/Input/ChatInput';
 import { AuthCodeModal } from './components/Auth/AuthCodeModal';
+import { FluentDropdown } from './components/Common/FluentDropdown';
 import { useConversations } from './hooks/useConversations';
 import { useChat } from './hooks/useChat';
 import { chatApi } from './services/chatApi';
 import { hasAuthCode, setAuthCode, clearAuthCode } from './services/auth';
+import { getConversationSettings, saveConversationSettings, deleteConversationSettings } from './services/settings';
 import type { ModelInfo } from './types';
 import './index.css';
+
+// Format context size for display (e.g., 100000 -> "100k")
+function formatContextSize(size: number): string {
+  if (size >= 1000) {
+    return `${size / 1000}k`;
+  }
+  return size.toString();
+}
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
-  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [contextSizeOptions, setContextSizeOptions] = useState<number[]>([]);
+  const [defaultContextSize, setDefaultContextSize] = useState(100000);
+  const [currentContextSize, setCurrentContextSize] = useState(100000);
+  const [maxMessagesOptions, setMaxMessagesOptions] = useState<number[]>([]);
+  const [defaultMaxMessages, setDefaultMaxMessages] = useState(50);
+  const [currentMaxMessages, setCurrentMaxMessages] = useState(50);
   const [showAuthModal, setShowAuthModal] = useState(!hasAuthCode());
   const [isAuthenticated, setIsAuthenticated] = useState(hasAuthCode());
 
@@ -64,6 +79,12 @@ function App() {
     chatApi.getModels().then(response => {
       setModels(response.models);
       setSelectedModel(response.defaultModel);
+      setContextSizeOptions(response.contextSizeOptions);
+      setDefaultContextSize(response.defaultContextSize);
+      setCurrentContextSize(response.defaultContextSize);
+      setMaxMessagesOptions(response.maxMessagesOptions);
+      setDefaultMaxMessages(response.defaultMaxMessages);
+      setCurrentMaxMessages(response.defaultMaxMessages);
     }).catch(err => {
       console.error('Failed to load models:', err);
       if (err.message === 'AUTH_REQUIRED') {
@@ -73,6 +94,18 @@ function App() {
 
     loadConversations();
   }, [isAuthenticated, handleAuthError, loadConversations]);
+
+  // Load conversation settings when active conversation changes
+  useEffect(() => {
+    if (activeConversation) {
+      const settings = getConversationSettings(activeConversation.id, defaultContextSize, defaultMaxMessages);
+      setCurrentContextSize(settings.maxContextSize);
+      setCurrentMaxMessages(settings.maxMessages);
+    } else {
+      setCurrentContextSize(defaultContextSize);
+      setCurrentMaxMessages(defaultMaxMessages);
+    }
+  }, [activeConversation?.id, defaultContextSize, defaultMaxMessages]);
 
   // Update document title based on active conversation
   useEffect(() => {
@@ -102,18 +135,53 @@ function App() {
     setSidebarOpen(false);
   };
 
+  const handleDeleteConversation = async (id: string) => {
+    await deleteConversation(id);
+    deleteConversationSettings(id);
+  };
+
+  const handleContextSizeChange = (size: number) => {
+    setCurrentContextSize(size);
+    if (activeConversation) {
+      saveConversationSettings(activeConversation.id, { maxContextSize: size, maxMessages: currentMaxMessages });
+    }
+  };
+
+  const handleMaxMessagesChange = (count: number) => {
+    setCurrentMaxMessages(count);
+    if (activeConversation) {
+      saveConversationSettings(activeConversation.id, { maxContextSize: currentContextSize, maxMessages: count });
+    }
+  };
+
   const handleSendMessage = async (message: string) => {
     if (!activeConversation) {
       const newConv = await createConversation();
       if (newConv) {
-        sendMessage(newConv.id, message, selectedModel);
+        // Save settings for new conversation
+        saveConversationSettings(newConv.id, { maxContextSize: currentContextSize, maxMessages: currentMaxMessages });
+        sendMessage(newConv.id, message, selectedModel, currentContextSize, currentMaxMessages);
       }
     } else {
-      sendMessage(activeConversation.id, message, selectedModel);
+      sendMessage(activeConversation.id, message, selectedModel, currentContextSize, currentMaxMessages);
     }
   };
 
-  const selectedModelName = models.find(m => m.id === selectedModel)?.name || selectedModel;
+  // Memoize dropdown options
+  const modelOptions = useMemo(() => 
+    models.map(m => ({ value: m.id, label: m.name })), 
+    [models]
+  );
+
+  const contextSizeDropdownOptions = useMemo(() => 
+    contextSizeOptions.map(s => ({ value: s, label: formatContextSize(s) })), 
+    [contextSizeOptions]
+  );
+
+  const maxMessagesDropdownOptions = useMemo(() => 
+    maxMessagesOptions.map(c => ({ value: c, label: `${c} msgs` })), 
+    [maxMessagesOptions]
+  );
 
   return (
     <div className="flex h-screen w-full">
@@ -127,7 +195,7 @@ function App() {
         activeId={activeConversation?.id || null}
         onSelect={handleSelectConversation}
         onNew={handleNewChat}
-        onDelete={deleteConversation}
+        onDelete={handleDeleteConversation}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
@@ -146,47 +214,30 @@ function App() {
           </h1>
           
           {/* Model Selector */}
-          <div className="relative">
-            <button
-              onClick={() => setModelDropdownOpen(!modelDropdownOpen)}
-              disabled={isStreaming}
-              className="flex items-center gap-1.5 px-3 py-1 text-sm 
-                         bg-neutral-100 hover:bg-neutral-200 border border-neutral-300
-                         rounded transition-all cursor-pointer
-                         disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <span className="text-neutral-700 font-medium">{selectedModelName}</span>
-              <ChevronDown size={14} className="text-neutral-500" />
-            </button>
-            
-            {modelDropdownOpen && (
-              <>
-                <div 
-                  className="fixed inset-0 z-10" 
-                  onClick={() => setModelDropdownOpen(false)} 
-                />
-                <div className="absolute right-0 mt-1 w-48 bg-white rounded-sm shadow-lg
-                                border border-neutral-200 py-1 z-20">
-                  {models.map(model => (
-                    <button
-                      key={model.id}
-                      onClick={() => {
-                        setSelectedModel(model.id);
-                        setModelDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm 
-                                  cursor-pointer transition-colors
-                                  ${model.id === selectedModel 
-                                    ? 'bg-neutral-100 text-neutral-900 font-medium' 
-                                    : 'text-neutral-700 hover:bg-neutral-50'}`}
-                    >
-                      {model.name}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+          <FluentDropdown
+            options={modelOptions}
+            value={selectedModel}
+            onChange={setSelectedModel}
+            disabled={isStreaming}
+          />
+
+          {/* Context Size Selector */}
+          <FluentDropdown
+            options={contextSizeDropdownOptions}
+            value={currentContextSize}
+            onChange={handleContextSizeChange}
+            disabled={isStreaming}
+            title="Context Size Limit"
+          />
+
+          {/* Max Messages Selector */}
+          <FluentDropdown
+            options={maxMessagesDropdownOptions}
+            value={currentMaxMessages}
+            onChange={handleMaxMessagesChange}
+            disabled={isStreaming}
+            title="Max Messages"
+          />
         </header>
 
         {/* Chat Area */}

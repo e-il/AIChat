@@ -6,5 +6,9 @@ public interface IAzureOpenAIService
 {
     List<ModelInfo> GetAvailableModels();
     string GetDefaultModel();
-    IAsyncEnumerable<string> StreamChatCompletionAsync(List<ChatMessage> messages, string modelId, CancellationToken cancellationToken = default);
+    int GetDefaultContextSize();
+    List<int> GetContextSizeOptions();
+    int GetDefaultMaxMessages();
+    List<int> GetMaxMessagesOptions();
+    IAsyncEnumerable<string> StreamChatCompletionAsync(List<ChatMessage> messages, string modelId, int maxContextSize, int maxMessages, CancellationToken cancellationToken = default);
 }

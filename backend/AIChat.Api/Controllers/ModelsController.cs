@@ -21,7 +21,11 @@ public class ModelsController : ControllerBase
         return Ok(new ModelsResponse
         {
             Models = _openAIService.GetAvailableModels(),
-            DefaultModel = _openAIService.GetDefaultModel()
+            DefaultModel = _openAIService.GetDefaultModel(),
+            DefaultContextSize = _openAIService.GetDefaultContextSize(),
+            ContextSizeOptions = _openAIService.GetContextSizeOptions(),
+            DefaultMaxMessages = _openAIService.GetDefaultMaxMessages(),
+            MaxMessagesOptions = _openAIService.GetMaxMessagesOptions()
         });
     }
 }
@@ -30,4 +34,8 @@ public class ModelsResponse
 {
     public List<ModelInfo> Models { get; set; } = new();
     public string DefaultModel { get; set; } = "";
+    public int DefaultContextSize { get; set; }
+    public List<int> ContextSizeOptions { get; set; } = new();
+    public int DefaultMaxMessages { get; set; }
+    public List<int> MaxMessagesOptions { get; set; } = new();
 }

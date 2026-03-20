@@ -1,15 +1,22 @@
-using System.Collections.Concurrent;
+using Microsoft.EntityFrameworkCore;
+using AIChat.Api.Data;
 using AIChat.Api.Models;
 
 namespace AIChat.Api.Services;
 
 public class ConversationService : IConversationService
 {
-    private readonly ConcurrentDictionary<string, Conversation> _conversations = new();
+    private readonly AIChatDbContext _db;
+    private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public Task<List<ConversationSummary>> GetAllConversationsAsync()
+    public ConversationService(AIChatDbContext db)
     {
-        var summaries = _conversations.Values
+        _db = db;
+    }
+
+    public async Task<List<ConversationSummary>> GetAllConversationsAsync()
+    {
+        return await _db.Conversations
             .OrderByDescending(c => c.UpdatedAt)
             .Select(c => new ConversationSummary
             {
@@ -19,61 +26,80 @@ public class ConversationService : IConversationService
                 UpdatedAt = c.UpdatedAt,
                 MessageCount = c.Messages.Count
             })
-            .ToList();
-
-        return Task.FromResult(summaries);
+            .ToListAsync();
     }
 
-    public Task<Conversation?> GetConversationAsync(string id)
+    public async Task<Conversation?> GetConversationAsync(string id)
     {
-        _conversations.TryGetValue(id, out var conversation);
-        return Task.FromResult(conversation);
+        return await _db.Conversations
+            .Include(c => c.Messages.OrderBy(m => m.Timestamp))
+            .FirstOrDefaultAsync(c => c.Id == id);
     }
 
-    public Task<Conversation> CreateConversationAsync()
+    public async Task<Conversation> CreateConversationAsync()
     {
         var conversation = new Conversation();
-        _conversations[conversation.Id] = conversation;
-        return Task.FromResult(conversation);
+        _db.Conversations.Add(conversation);
+        await _db.SaveChangesAsync();
+        return conversation;
     }
 
-    public Task<bool> DeleteConversationAsync(string id)
+    public async Task<bool> DeleteConversationAsync(string id)
     {
-        return Task.FromResult(_conversations.TryRemove(id, out _));
+        var conversation = await _db.Conversations.FindAsync(id);
+        if (conversation == null) return false;
+        
+        _db.Conversations.Remove(conversation);
+        await _db.SaveChangesAsync();
+        return true;
     }
 
-    public Task<ChatMessage> AddMessageAsync(string conversationId, string role, string content)
+    public async Task<ChatMessage> AddMessageAsync(string conversationId, string role, string content)
     {
-        if (!_conversations.TryGetValue(conversationId, out var conversation))
+        // Use lock to prevent race conditions when adding messages
+        await _lock.WaitAsync();
+        try
         {
-            throw new KeyNotFoundException($"Conversation {conversationId} not found");
+            var conversation = await _db.Conversations.FindAsync(conversationId)
+                ?? throw new KeyNotFoundException($"Conversation {conversationId} not found");
+
+            var message = new ChatMessage
+            {
+                ConversationId = conversationId,
+                Role = role,
+                Content = content
+            };
+
+            _db.Messages.Add(message);
+            conversation.UpdatedAt = DateTime.UtcNow;
+
+            // Auto-generate title from first user message
+            if (conversation.Title == "New Chat" && role == "user")
+            {
+                var messageCount = await _db.Messages.CountAsync(m => m.ConversationId == conversationId);
+                if (messageCount == 0)
+                {
+                    conversation.Title = content.Length > 50 ? content[..47] + "..." : content;
+                }
+            }
+
+            await _db.SaveChangesAsync();
+            return message;
         }
-
-        var message = new ChatMessage
+        finally
         {
-            Role = role,
-            Content = content
-        };
-
-        conversation.Messages.Add(message);
-        conversation.UpdatedAt = DateTime.UtcNow;
-
-        // Auto-generate title from first user message
-        if (conversation.Title == "New Chat" && role == "user" && conversation.Messages.Count == 1)
-        {
-            conversation.Title = content.Length > 50 ? content[..47] + "..." : content;
+            _lock.Release();
         }
-
-        return Task.FromResult(message);
     }
 
-    public Task UpdateTitleAsync(string conversationId, string title)
+    public async Task UpdateTitleAsync(string conversationId, string title)
     {
-        if (_conversations.TryGetValue(conversationId, out var conversation))
+        var conversation = await _db.Conversations.FindAsync(conversationId);
+        if (conversation != null)
         {
             conversation.Title = title;
             conversation.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
         }
-        return Task.CompletedTask;
     }
 }

@@ -11,7 +11,7 @@ export function useChat() {
   const onMessageCompleteRef = useRef<((conversationId: string, message: Message) => void) | null>(null);
   const onAuthErrorRef = useRef<(() => void) | null>(null);
 
-  const sendMessage = useCallback(async (conversationId: string, message: string, modelId: string) => {
+  const sendMessage = useCallback(async (conversationId: string, message: string, modelId: string, maxContextSize: number, maxMessages: number) => {
     const authCode = getAuthCode();
     if (!authCode) {
       setAuthError(true);
@@ -64,7 +64,7 @@ export function useChat() {
       await connection.start();
       // Use send() instead of invoke() - fire-and-forget since we get response via events
       // This avoids error when MessageComplete handler stops the connection
-      connection.send('SendMessage', conversationId, message, modelId);
+      connection.send('SendMessage', conversationId, message, modelId, maxContextSize, maxMessages);
     } catch (err) {
       console.error('Failed to send message:', err);
       setIsStreaming(false);

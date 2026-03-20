@@ -40,6 +40,14 @@ public class AzureOpenAIService : IAzureOpenAIService
 
     public string GetDefaultModel() => _settings.DefaultModel;
 
+    public int GetDefaultContextSize() => _settings.DefaultContextSize;
+
+    public List<int> GetContextSizeOptions() => _settings.ContextSizeOptions;
+
+    public int GetDefaultMaxMessages() => _settings.DefaultMaxMessages;
+
+    public List<int> GetMaxMessagesOptions() => _settings.MaxMessagesOptions;
+
     private ChatClient GetChatClient(string modelId)
     {
         return _chatClients.GetOrAdd(modelId, id =>
@@ -55,13 +63,18 @@ public class AzureOpenAIService : IAzureOpenAIService
     public async IAsyncEnumerable<string> StreamChatCompletionAsync(
         List<AppChatMessage> messages,
         string modelId,
+        int maxContextSize,
+        int maxMessages,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting stream for model {ModelId} with {MessageCount} messages", modelId, messages.Count);
+        // Truncate context by message count first, then by size
+        var truncatedMessages = TruncateContext(messages, maxContextSize, maxMessages);
+        _logger.LogInformation("Starting stream for model {ModelId} with {MessageCount} messages (truncated from {OriginalCount})", 
+            modelId, truncatedMessages.Count, messages.Count);
         
         var chatClient = GetChatClient(modelId);
         
-        var chatMessages = messages.Select(m => m.Role switch
+        var chatMessages = truncatedMessages.Select(m => m.Role switch
         {
             "system" => new SystemChatMessage(m.Content) as OpenAI.Chat.ChatMessage,
             "assistant" => new AssistantChatMessage(m.Content),
@@ -102,5 +115,48 @@ public class AzureOpenAIService : IAzureOpenAIService
             }
         }
         _logger.LogInformation("Stream completed with {ChunkCount} chunks", chunkCount);
+    }
+
+    /// <summary>
+    /// Truncates conversation context by message count and size.
+    /// Keeps the most recent messages, removing older ones first.
+    /// </summary>
+    private List<AppChatMessage> TruncateContext(List<AppChatMessage> messages, int maxContextSize, int maxMessages)
+    {
+        // First, limit by message count
+        var limitedMessages = messages.Count > maxMessages 
+            ? messages.Skip(messages.Count - maxMessages).ToList() 
+            : messages;
+
+        var totalSize = limitedMessages.Sum(m => m.Content?.Length ?? 0);
+        
+        if (totalSize <= maxContextSize)
+        {
+            if (limitedMessages.Count < messages.Count)
+            {
+                _logger.LogInformation("Context truncated by message count: {OriginalCount} -> {NewCount}", 
+                    messages.Count, limitedMessages.Count);
+            }
+            return limitedMessages;
+        }
+
+        // Then, limit by size
+        var result = new List<AppChatMessage>();
+        var currentSize = 0;
+        
+        for (var i = limitedMessages.Count - 1; i >= 0; i--)
+        {
+            var msgSize = limitedMessages[i].Content?.Length ?? 0;
+            if (currentSize + msgSize > maxContextSize)
+                break;
+                
+            result.Insert(0, limitedMessages[i]);
+            currentSize += msgSize;
+        }
+
+        _logger.LogInformation("Context truncated: {OriginalCount} messages -> {NewCount} messages, {OriginalSize} -> {NewSize} chars",
+            messages.Count, result.Count, totalSize, currentSize);
+
+        return result;
     }
 }

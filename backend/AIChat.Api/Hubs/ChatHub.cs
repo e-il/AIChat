@@ -66,10 +66,10 @@ public class ChatHub : Hub
         return _authenticatedConnections.ContainsKey(Context.ConnectionId);
     }
 
-    public async Task SendMessage(string conversationId, string message, string modelId)
+    public async Task SendMessage(string conversationId, string message, string modelId, int maxContextSize = 100000, int maxMessages = 50)
     {
-        _logger.LogInformation("SendMessage called: conversationId={ConversationId}, message length={Length}, modelId={ModelId}", 
-            conversationId, message?.Length ?? 0, modelId);
+        _logger.LogInformation("SendMessage called: conversationId={ConversationId}, message length={Length}, modelId={ModelId}, maxContextSize={MaxContextSize}, maxMessages={MaxMessages}", 
+            conversationId, message?.Length ?? 0, modelId, maxContextSize, maxMessages);
             
         if (!IsConnectionAuthenticated())
         {
@@ -90,6 +90,14 @@ public class ChatHub : Hub
                 return;
             }
 
+            // Validate message is not null or empty
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                _logger.LogWarning("Empty message rejected for conversation: {ConversationId}", conversationId);
+                await Clients.Caller.SendAsync("Error", conversationId, "Message cannot be empty");
+                return;
+            }
+
             _logger.LogInformation("Conversation found, adding user message");
             
             // Add user message
@@ -101,7 +109,7 @@ public class ChatHub : Hub
             // Stream AI response
             var fullResponse = new System.Text.StringBuilder();
             
-            await foreach (var chunk in _openAIService.StreamChatCompletionAsync(conversation.Messages, modelId))
+            await foreach (var chunk in _openAIService.StreamChatCompletionAsync(conversation.Messages, modelId, maxContextSize, maxMessages))
             {
                 fullResponse.Append(chunk);
                 await Clients.Caller.SendAsync("ReceiveMessageChunk", conversationId, chunk);

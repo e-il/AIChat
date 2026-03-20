@@ -30,4 +30,14 @@ export interface ModelInfo {
 export interface ModelsResponse {
   models: ModelInfo[];
   defaultModel: string;
+  defaultContextSize: number;
+  contextSizeOptions: number[];
+  defaultMaxMessages: number;
+  maxMessagesOptions: number[];
+}
+
+// Client-side conversation settings (stored in localStorage)
+export interface ConversationSettings {
+  maxContextSize: number;
+  maxMessages: number;
 }
