@@ -12,7 +12,7 @@ services:
       - AuthCodes__1=${AUTH_CODE_2:-admin456}
       - AuthCodes__2=${AUTH_CODE_3:-user789}
     volumes:
-      - aichat-data:/app/data
+      - ./data:/app/data
     ports:
       - "5000:5000"
     restart: unless-stopped
@@ -27,6 +27,3 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
-
-volumes:
-  aichat-data:
