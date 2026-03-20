@@ -24,8 +24,10 @@ export function useChat() {
     setAuthError(false);
 
     // Create a new connection for this streaming session with auth code
+    // Using accessTokenFactory is more secure than query string - token sent in header for HTTP,
+    // or as 'access_token' query param for WebSocket (browser limitation)
     const connection = new signalR.HubConnectionBuilder()
-      .withUrl(`/chathub?authCode=${encodeURIComponent(authCode)}`)
+      .withUrl('/chathub', { accessTokenFactory: () => authCode })
       .build();
 
     connection.on('ReceiveMessageChunk', (_conversationId: string, chunk: string) => {

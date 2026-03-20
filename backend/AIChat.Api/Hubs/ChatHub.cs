@@ -29,7 +29,9 @@ public class ChatHub : Hub
     private string? GetAuthCodeFromQuery()
     {
         var httpContext = Context.GetHttpContext();
-        return httpContext?.Request.Query["authCode"].FirstOrDefault();
+        // SignalR accessTokenFactory sends token as 'access_token' query param for WebSocket
+        // (browsers can't set headers on WebSocket connections)
+        return httpContext?.Request.Query["access_token"].FirstOrDefault();
     }
 
     public override async Task OnConnectedAsync()

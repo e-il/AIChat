@@ -1,4 +1,5 @@
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy, Check } from 'lucide-react';
@@ -55,6 +56,96 @@ function CodeBlock({ language, children }: CodeBlockProps) {
   );
 }
 
+// Shared markdown components config
+const markdownComponents: Components = {
+  code({ className, children, ...props }) {
+    const match = /language-(\w+)/.exec(className || '');
+    const isInline = !match && !String(children).includes('\n');
+    
+    if (isInline) {
+      return (
+        <code className="px-1.5 py-0.5 bg-neutral-100 text-primary-600 rounded text-[13px] font-mono" {...props}>
+          {children}
+        </code>
+      );
+    }
+    
+    return (
+      <CodeBlock language={match?.[1] || ''}>
+        {String(children).replace(/\n$/, '')}
+      </CodeBlock>
+    );
+  },
+  p({ children }) {
+    return <p className="my-2 first:mt-0 last:mb-0">{children}</p>;
+  },
+  h1({ children }) {
+    return <h1 className="text-xl font-semibold text-neutral-900 mt-4 mb-2 first:mt-0">{children}</h1>;
+  },
+  h2({ children }) {
+    return <h2 className="text-lg font-semibold text-neutral-900 mt-4 mb-2 first:mt-0">{children}</h2>;
+  },
+  h3({ children }) {
+    return <h3 className="text-base font-semibold text-neutral-900 mt-3 mb-2 first:mt-0">{children}</h3>;
+  },
+  ul({ children }) {
+    return <ul className="list-disc pl-5 my-2 space-y-1">{children}</ul>;
+  },
+  ol({ children }) {
+    return <ol className="list-decimal pl-5 my-2 space-y-1">{children}</ol>;
+  },
+  li({ children }) {
+    return <li className="text-neutral-700">{children}</li>;
+  },
+  blockquote({ children }) {
+    return (
+      <blockquote className="border-l-4 border-primary-500 pl-4 py-1 my-2 bg-primary-50/50 text-neutral-600 italic">
+        {children}
+      </blockquote>
+    );
+  },
+  a({ href, children }) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" 
+         className="text-primary-600 hover:underline">
+        {children}
+      </a>
+    );
+  },
+  table({ children }) {
+    return (
+      <div className="overflow-x-auto my-3">
+        <table className="min-w-full border border-neutral-200 rounded">
+          {children}
+        </table>
+      </div>
+    );
+  },
+  th({ children }) {
+    return (
+      <th className="px-3 py-2 bg-neutral-100 text-left text-sm font-semibold text-neutral-800 border-b border-neutral-200">
+        {children}
+      </th>
+    );
+  },
+  td({ children }) {
+    return (
+      <td className="px-3 py-2 text-sm text-neutral-700 border-b border-neutral-100">
+        {children}
+      </td>
+    );
+  },
+  hr() {
+    return <hr className="my-4 border-neutral-200" />;
+  },
+  strong({ children }) {
+    return <strong className="font-semibold text-neutral-900">{children}</strong>;
+  },
+  em({ children }) {
+    return <em className="italic">{children}</em>;
+  },
+};
+
 interface MessageBubbleProps {
   message: Message;
 }
@@ -84,98 +175,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     <div className="mb-3 group">
       <div className="bg-white border border-neutral-200 px-3 py-2 rounded">
         <div className="markdown-content text-sm leading-relaxed text-neutral-800">
-          <ReactMarkdown
-            components={{
-            code({ className, children, ...props }) {
-              const match = /language-(\w+)/.exec(className || '');
-              const isInline = !match && !String(children).includes('\n');
-              
-              if (isInline) {
-                return (
-                  <code className="px-1.5 py-0.5 bg-neutral-100 text-primary-600 rounded text-[13px] font-mono" {...props}>
-                    {children}
-                  </code>
-                );
-              }
-              
-              return (
-                <CodeBlock language={match?.[1] || ''}>
-                  {String(children).replace(/\n$/, '')}
-                </CodeBlock>
-              );
-            },
-            p({ children }) {
-              return <p className="my-2 first:mt-0 last:mb-0">{children}</p>;
-            },
-            h1({ children }) {
-              return <h1 className="text-xl font-semibold text-neutral-900 mt-4 mb-2 first:mt-0">{children}</h1>;
-            },
-            h2({ children }) {
-              return <h2 className="text-lg font-semibold text-neutral-900 mt-4 mb-2 first:mt-0">{children}</h2>;
-            },
-            h3({ children }) {
-              return <h3 className="text-base font-semibold text-neutral-900 mt-3 mb-2 first:mt-0">{children}</h3>;
-            },
-            ul({ children }) {
-              return <ul className="list-disc pl-5 my-2 space-y-1">{children}</ul>;
-            },
-            ol({ children }) {
-              return <ol className="list-decimal pl-5 my-2 space-y-1">{children}</ol>;
-            },
-            li({ children }) {
-              return <li className="text-neutral-700">{children}</li>;
-            },
-            blockquote({ children }) {
-              return (
-                <blockquote className="border-l-4 border-primary-500 pl-4 py-1 my-2 bg-primary-50/50 text-neutral-600 italic">
-                  {children}
-                </blockquote>
-              );
-            },
-            a({ href, children }) {
-              return (
-                <a href={href} target="_blank" rel="noopener noreferrer" 
-                   className="text-primary-600 hover:underline">
-                  {children}
-                </a>
-              );
-            },
-            table({ children }) {
-              return (
-                <div className="overflow-x-auto my-3">
-                  <table className="min-w-full border border-neutral-200 rounded">
-                    {children}
-                  </table>
-                </div>
-              );
-            },
-            th({ children }) {
-              return (
-                <th className="px-3 py-2 bg-neutral-100 text-left text-sm font-semibold text-neutral-800 border-b border-neutral-200">
-                  {children}
-                </th>
-              );
-            },
-            td({ children }) {
-              return (
-                <td className="px-3 py-2 text-sm text-neutral-700 border-b border-neutral-100">
-                  {children}
-                </td>
-              );
-            },
-            hr() {
-              return <hr className="my-4 border-neutral-200" />;
-            },
-            strong({ children }) {
-              return <strong className="font-semibold text-neutral-900">{children}</strong>;
-            },
-            em({ children }) {
-              return <em className="italic">{children}</em>;
-            },
-          }}
-        >
-          {message.content}
-        </ReactMarkdown>
+          <ReactMarkdown components={markdownComponents}>
+            {message.content}
+          </ReactMarkdown>
         </div>
       </div>
       {/* Copy button - bottom left, outside card */}
@@ -199,34 +201,10 @@ export function StreamingBubble({ content }: StreamingBubbleProps) {
     <div className="mb-3">
       <div className="bg-white border border-neutral-200 px-3 py-2 rounded">
         <div className="markdown-content text-sm leading-relaxed text-neutral-800">
-          <ReactMarkdown
-          components={{
-            code({ className, children, ...props }) {
-              const match = /language-(\w+)/.exec(className || '');
-              const isInline = !match && !String(children).includes('\n');
-              
-              if (isInline) {
-                return (
-                  <code className="px-1.5 py-0.5 bg-neutral-100 text-primary-600 rounded text-[13px] font-mono" {...props}>
-                    {children}
-                  </code>
-                );
-              }
-              
-              return (
-                <CodeBlock language={match?.[1] || ''}>
-                  {String(children).replace(/\n$/, '')}
-                </CodeBlock>
-              );
-            },
-            p({ children }) {
-              return <p className="my-2 first:mt-0 last:mb-0">{children}</p>;
-            },
-          }}
-        >
-          {content}
-        </ReactMarkdown>
-        <span className="inline-block w-0.5 h-4 bg-primary-500 animate-pulse ml-0.5" />
+          <ReactMarkdown components={markdownComponents}>
+            {content}
+          </ReactMarkdown>
+          <span className="inline-block w-0.5 h-4 bg-primary-500 animate-pulse ml-0.5" />
         </div>
       </div>
     </div>
