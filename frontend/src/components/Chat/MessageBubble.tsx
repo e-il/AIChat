@@ -60,7 +60,14 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
+  const [copied, setCopied] = useState(false);
   const isUser = message.role === 'user';
+
+  const handleCopyMessage = async () => {
+    await navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   if (isUser) {
     return (
@@ -74,7 +81,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 
   // AI message - full width, white card style
   return (
-    <div className="mb-3">
+    <div className="mb-3 group">
       <div className="bg-white border border-neutral-200 px-3 py-2 rounded">
         <div className="markdown-content text-sm leading-relaxed text-neutral-800">
           <ReactMarkdown
@@ -171,6 +178,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         </ReactMarkdown>
         </div>
       </div>
+      {/* Copy button - bottom left, outside card */}
+      <button
+        onClick={handleCopyMessage}
+        className="mt-1 p-1 rounded text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100
+                   opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+      >
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+      </button>
     </div>
   );
 }
