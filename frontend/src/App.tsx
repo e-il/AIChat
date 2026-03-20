@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Menu } from 'lucide-react';
+import { Menu, History } from 'lucide-react';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatArea } from './components/Chat/ChatArea';
 import { ChatInput } from './components/Input/ChatInput';
 import { AuthCodeModal } from './components/Auth/AuthCodeModal';
-import { FluentDropdown } from './components/Common/FluentDropdown';
+import { Dropdown } from './components/Common/Dropdown';
 import { useConversations } from './hooks/useConversations';
 import { useChat } from './hooks/useChat';
 import { chatApi } from './services/chatApi';
@@ -13,19 +13,10 @@ import { getConversationSettings, saveConversationSettings, deleteConversationSe
 import type { ModelInfo } from './types';
 import './index.css';
 
-// Format context size for display (e.g., 100000 -> "100k")
-function formatContextSize(size: number): string {
-  if (size >= 1000) {
-    return `${size / 1000}k`;
-  }
-  return size.toString();
-}
-
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
-  const [contextSizeOptions, setContextSizeOptions] = useState<number[]>([]);
   const [defaultContextSize, setDefaultContextSize] = useState(100000);
   const [currentContextSize, setCurrentContextSize] = useState(100000);
   const [maxMessagesOptions, setMaxMessagesOptions] = useState<number[]>([]);
@@ -79,7 +70,6 @@ function App() {
     chatApi.getModels().then(response => {
       setModels(response.models);
       setSelectedModel(response.defaultModel);
-      setContextSizeOptions(response.contextSizeOptions);
       setDefaultContextSize(response.defaultContextSize);
       setCurrentContextSize(response.defaultContextSize);
       setMaxMessagesOptions(response.maxMessagesOptions);
@@ -173,18 +163,16 @@ function App() {
     [models]
   );
 
-  const contextSizeDropdownOptions = useMemo(() => 
-    contextSizeOptions.map(s => ({ value: s, label: formatContextSize(s) })), 
-    [contextSizeOptions]
-  );
-
   const maxMessagesDropdownOptions = useMemo(() => 
     maxMessagesOptions.map(c => ({ value: c, label: `${c} msgs` })), 
     [maxMessagesOptions]
   );
 
+  // Get selected model name for header badge
+  const selectedModelName = models.find(m => m.id === selectedModel)?.name || '';
+
   return (
-    <div className="flex h-screen w-full">
+    <div className="flex h-screen w-full bg-surface">
       {/* Auth Modal */}
       {showAuthModal && (
         <AuthCodeModal onSubmit={handleAuthSubmit} />
@@ -200,44 +188,49 @@ function App() {
         onClose={() => setSidebarOpen(false)}
       />
 
-      <main className="flex-1 flex flex-col min-w-0 bg-white">
-        {/* Header - Light Style */}
-        <header className="flex items-center gap-3 px-4 py-2 bg-white border-b border-neutral-200">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="lg:hidden p-2 hover:bg-neutral-100 rounded transition-colors cursor-pointer"
-          >
-            <Menu size={20} className="text-neutral-600" />
-          </button>
-          <h1 className="text-sm font-semibold truncate flex-1 min-w-0 text-neutral-800">
-            {activeConversation?.title || 'AIChat'}
-          </h1>
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col min-w-0 relative">
+        {/* TopAppBar - Glassmorphic Header */}
+        <header className="sticky top-0 flex justify-between items-center px-6 py-3 
+                           bg-white/80 backdrop-blur-xl shadow-sm z-30 
+                           border-b border-slate-200/50">
+          <div className="flex items-center gap-4">
+            {/* Mobile menu button */}
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-2 hover:bg-surface-container rounded-lg transition-colors cursor-pointer"
+            >
+              <Menu size={20} className="text-on-surface-variant" />
+            </button>
+            
+            {/* Accent bar */}
+            <div className="hidden sm:block h-8 w-[2px] bg-primary/20 rounded-full" />
+            
+            {/* Title */}
+            <h2 className="font-headline text-lg font-bold text-slate-900 truncate">
+              {activeConversation?.title || 'New Chat'}
+            </h2>
+
+            {/* Model name badge */}
+            {selectedModelName && (
+              <span className="px-2.5 py-1 text-[0.65rem] font-semibold text-primary bg-primary/10 
+                               rounded-full whitespace-nowrap">
+                {selectedModelName}
+              </span>
+            )}
+          </div>
           
-          {/* Model Selector */}
-          <FluentDropdown
-            options={modelOptions}
-            value={selectedModel}
-            onChange={setSelectedModel}
-            disabled={isStreaming}
-          />
-
-          {/* Context Size Selector */}
-          <FluentDropdown
-            options={contextSizeDropdownOptions}
-            value={currentContextSize}
-            onChange={handleContextSizeChange}
-            disabled={isStreaming}
-            title="Context Size Limit"
-          />
-
-          {/* Max Messages Selector */}
-          <FluentDropdown
-            options={maxMessagesDropdownOptions}
-            value={currentMaxMessages}
-            onChange={handleMaxMessagesChange}
-            disabled={isStreaming}
-            title="Max Messages"
-          />
+          <div className="flex items-center gap-2">
+            {/* Max Messages / History Button */}
+            <Dropdown
+              options={maxMessagesDropdownOptions}
+              value={currentMaxMessages}
+              onChange={handleMaxMessagesChange}
+              disabled={isStreaming}
+              title="Max Messages in History"
+              icon={<History size={18} />}
+            />
+          </div>
         </header>
 
         {/* Chat Area */}
@@ -248,10 +241,15 @@ function App() {
           isLoading={isLoading}
         />
 
-        {/* Input */}
+        {/* Floating Input */}
         <ChatInput
           onSend={handleSendMessage}
           disabled={isStreaming}
+          models={modelOptions}
+          selectedModel={selectedModel}
+          onModelChange={setSelectedModel}
+          currentContextSize={currentContextSize}
+          onContextSizeChange={handleContextSizeChange}
         />
       </main>
     </div>

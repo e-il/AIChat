@@ -1,28 +1,31 @@
 import { useState, useRef, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 
-interface DropdownOption<T> {
+export interface DropdownOption<T> {
   value: T;
   label: string;
 }
 
-interface FluentDropdownProps<T> {
+interface DropdownProps<T> {
   options: DropdownOption<T>[];
   value: T;
   onChange: (value: T) => void;
   disabled?: boolean;
   title?: string;
   className?: string;
+  icon?: ReactNode;
 }
 
-export function FluentDropdown<T>({
+export function Dropdown<T>({
   options,
   value,
   onChange,
   disabled = false,
   title,
   className = '',
-}: FluentDropdownProps<T>) {
+  icon,
+}: DropdownProps<T>) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -52,43 +55,53 @@ export function FluentDropdown<T>({
     }
   }, [isOpen]);
 
+  // Icon-only mode when icon is provided
+  const isIconOnly = !!icon;
+
   return (
     <div ref={dropdownRef} className={`relative ${className}`}>
-      {/* Trigger Button - Fluent Design Style */}
+      {/* Trigger Button */}
       <button
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
         title={title}
         className={`
-          flex items-center gap-1.5 h-8 px-3 text-sm font-normal
-          bg-white hover:bg-neutral-50 active:bg-neutral-100
-          border border-neutral-300 hover:border-neutral-400
-          rounded shadow-sm
+          flex items-center justify-center gap-2 text-[0.75rem] font-semibold
+          ${isIconOnly 
+            ? 'p-2 hover:bg-surface-container rounded-lg' 
+            : 'px-3 py-1.5 bg-surface-container-high hover:bg-surface-container-highest rounded-full'
+          }
           transition-all duration-150 ease-out
-          cursor-pointer select-none
-          disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:border-neutral-300
-          focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500
+          cursor-pointer select-none group
+          disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-surface-container-high
+          focus:outline-none focus:ring-2 focus:ring-primary/30
+          ${isIconOnly ? 'text-on-surface-variant hover:text-primary' : ''}
         `}
       >
-        <span className="text-neutral-800">{selectedOption?.label}</span>
-        <ChevronDown 
-          size={14} 
-          className={`text-neutral-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} 
-        />
+        {isIconOnly ? (
+          icon
+        ) : (
+          <>
+            <span className="text-on-surface">{selectedOption?.label}</span>
+            <ChevronDown 
+              size={14} 
+              className={`text-on-surface-variant transition-transform duration-200 group-hover:translate-y-0.5 ${isOpen ? 'rotate-180' : ''}`} 
+            />
+          </>
+        )}
       </button>
       
-      {/* Dropdown Menu - Fluent Design Style */}
+      {/* Dropdown Menu */}
       {isOpen && (
         <div 
           className="
-            absolute right-0 mt-1 min-w-full w-max
-            bg-white rounded-md
-            border border-neutral-200
+            absolute right-0 mt-2 min-w-[120px] w-max
+            bg-surface-container-lowest rounded-xl
             py-1 z-50
             origin-top-right
           "
           style={{
-            boxShadow: '0 3px 12px rgba(0,0,0,0.15), 0 1px 2px rgba(0,0,0,0.08)',
+            boxShadow: '0 4px 24px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.08)',
             animation: 'dropdownFadeIn 150ms ease-out'
           }}
         >
@@ -102,24 +115,24 @@ export function FluentDropdown<T>({
                   setIsOpen(false);
                 }}
                 className={`
-                  w-full text-left px-3 py-1.5 text-sm
+                  w-full text-left px-4 py-2 text-sm
                   flex items-center gap-2
                   transition-colors duration-75
                   cursor-pointer
                   ${isSelected 
-                    ? 'bg-blue-50 text-blue-700' 
-                    : 'text-neutral-700 hover:bg-neutral-100'
+                    ? 'bg-primary/10 text-primary' 
+                    : 'text-on-surface hover:bg-surface-container-high'
                   }
                 `}
               >
-                {/* Selection indicator - Fluent accent bar */}
+                {/* Selection indicator */}
                 <span 
                   className={`
                     w-0.5 h-4 rounded-full transition-colors
-                    ${isSelected ? 'bg-blue-600' : 'bg-transparent'}
+                    ${isSelected ? 'bg-primary' : 'bg-transparent'}
                   `} 
                 />
-                <span className={isSelected ? 'font-medium' : 'font-normal'}>
+                <span className={isSelected ? 'font-semibold' : 'font-medium'}>
                   {option.label}
                 </span>
               </button>
