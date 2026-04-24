@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
+using AIChat.Api.Models;
 using AIChat.Api.Services;
 
 namespace AIChat.Api.Hubs;
@@ -6,21 +7,18 @@ namespace AIChat.Api.Hubs;
 public class ChatHub : Hub
 {
     private readonly IAzureOpenAIService _openAIService;
-    private readonly IConversationService _conversationService;
     private readonly ILogger<ChatHub> _logger;
     private readonly HashSet<string> _validCodes;
-    
+
     // Track authenticated connections
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _authenticatedConnections = new();
 
     public ChatHub(
         IAzureOpenAIService openAIService,
-        IConversationService conversationService,
         ILogger<ChatHub> logger,
         IConfiguration configuration)
     {
         _openAIService = openAIService;
-        _conversationService = conversationService;
         _logger = logger;
         var codes = configuration.GetSection("AuthCodes").Get<string[]>() ?? [];
         _validCodes = new HashSet<string>(codes, StringComparer.Ordinal);
@@ -37,23 +35,22 @@ public class ChatHub : Hub
     public override async Task OnConnectedAsync()
     {
         var authCode = GetAuthCodeFromQuery();
-        _logger.LogInformation("SignalR connect - authCode: {AuthCode}, valid codes count: {Count}", 
+        _logger.LogInformation("SignalR connect - authCode: {AuthCode}, valid codes count: {Count}",
             authCode ?? "null", _validCodes.Count);
-        
+
         if (string.IsNullOrEmpty(authCode) || !_validCodes.Contains(authCode))
         {
             _logger.LogWarning("SignalR auth failed on connect, aborting");
             Context.Abort();
             return;
         }
-        
-        // Store the connection as authenticated
+
         _authenticatedConnections[Context.ConnectionId] = authCode;
         _logger.LogInformation("SignalR auth succeeded for connection {ConnectionId}", Context.ConnectionId);
-        
+
         await base.OnConnectedAsync();
     }
-    
+
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         _authenticatedConnections.TryRemove(Context.ConnectionId, out _);
@@ -66,11 +63,16 @@ public class ChatHub : Hub
         return _authenticatedConnections.ContainsKey(Context.ConnectionId);
     }
 
-    public async Task SendMessage(string conversationId, string message, string modelId, int maxContextSize = 100000, int maxMessages = 50)
+    public async Task SendMessage(
+        string conversationId,
+        List<ChatMessage> messages,
+        string modelId,
+        int maxContextSize = 100000,
+        int maxMessages = 50)
     {
-        _logger.LogInformation("SendMessage called: conversationId={ConversationId}, message length={Length}, modelId={ModelId}, maxContextSize={MaxContextSize}, maxMessages={MaxMessages}", 
-            conversationId, message?.Length ?? 0, modelId, maxContextSize, maxMessages);
-            
+        _logger.LogInformation("SendMessage called: conversationId={ConversationId}, message count={Count}, modelId={ModelId}, maxContextSize={MaxContextSize}, maxMessages={MaxMessages}",
+            conversationId, messages?.Count ?? 0, modelId, maxContextSize, maxMessages);
+
         if (!IsConnectionAuthenticated())
         {
             _logger.LogWarning("SendMessage rejected - connection not authenticated");
@@ -79,51 +81,32 @@ public class ChatHub : Hub
             return;
         }
 
+        if (messages is null || messages.Count == 0)
+        {
+            _logger.LogWarning("Empty messages array rejected for conversation: {ConversationId}", conversationId);
+            await Clients.Caller.SendAsync("Error", conversationId, "Messages cannot be empty");
+            return;
+        }
+
+        var lastMessage = messages[^1];
+        if (lastMessage.Role != "user" || string.IsNullOrWhiteSpace(lastMessage.Content))
+        {
+            _logger.LogWarning("Last message must be a non-empty user message for conversation: {ConversationId}", conversationId);
+            await Clients.Caller.SendAsync("Error", conversationId, "Last message must be a non-empty user message");
+            return;
+        }
+
         try
         {
-            // Get or create conversation
-            var conversation = await _conversationService.GetConversationAsync(conversationId);
-            if (conversation == null)
-            {
-                _logger.LogWarning("Conversation not found: {ConversationId}", conversationId);
-                await Clients.Caller.SendAsync("Error", conversationId, "Conversation not found");
-                return;
-            }
-
-            // Validate message is not null or empty
-            if (string.IsNullOrWhiteSpace(message))
-            {
-                _logger.LogWarning("Empty message rejected for conversation: {ConversationId}", conversationId);
-                await Clients.Caller.SendAsync("Error", conversationId, "Message cannot be empty");
-                return;
-            }
-
-            _logger.LogInformation("Conversation found, adding user message");
-            
-            // Add user message
-            var userMessage = await _conversationService.AddMessageAsync(conversationId, "user", message);
-            await Clients.Caller.SendAsync("MessageAdded", conversationId, userMessage);
-
             _logger.LogInformation("Streaming AI response with model {ModelId}", modelId);
-            
-            // Stream AI response
-            var fullResponse = new System.Text.StringBuilder();
-            
-            await foreach (var chunk in _openAIService.StreamChatCompletionAsync(conversation.Messages, modelId, maxContextSize, maxMessages))
+
+            await foreach (var chunk in _openAIService.StreamChatCompletionAsync(messages, modelId, maxContextSize, maxMessages))
             {
-                fullResponse.Append(chunk);
                 await Clients.Caller.SendAsync("ReceiveMessageChunk", conversationId, chunk);
             }
 
-            _logger.LogInformation("Stream complete, saving assistant message");
-            
-            // Save complete assistant message
-            var assistantMessage = await _conversationService.AddMessageAsync(
-                conversationId, "assistant", fullResponse.ToString());
-            
-            // Send completion signal - client should disconnect after this
-            await Clients.Caller.SendAsync("MessageComplete", conversationId, assistantMessage);
-            _logger.LogInformation("MessageComplete sent");
+            _logger.LogInformation("Stream complete for conversation {ConversationId}", conversationId);
+            await Clients.Caller.SendAsync("StreamComplete", conversationId);
         }
         catch (Exception ex)
         {

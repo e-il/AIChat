@@ -1,5 +1,3 @@
-using Microsoft.EntityFrameworkCore;
-using AIChat.Api.Data;
 using AIChat.Api.Hubs;
 using AIChat.Api.Services;
 using AIChat.Api.Middleware;
@@ -11,13 +9,7 @@ builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddSignalR();
 
-// Configure SQLite - use data folder for Docker volume mapping
-Directory.CreateDirectory("data");
-builder.Services.AddDbContext<AIChatDbContext>(options =>
-    options.UseSqlite("Data Source=data/aichat.db"));
-
 // Register application services
-builder.Services.AddScoped<IConversationService, ConversationService>();
 builder.Services.AddSingleton<IAzureOpenAIService, AzureOpenAIService>();
 
 // Configure CORS
@@ -33,13 +25,6 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
-
-// Auto-migrate database
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<AIChatDbContext>();
-    db.Database.EnsureCreated();
-}
 
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())

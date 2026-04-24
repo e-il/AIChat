@@ -6,65 +6,55 @@ import { getAuthCode } from '../services/auth';
 export function useChat() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
-  const [authError, setAuthError] = useState(false);
-  const onMessageAddedRef = useRef<((conversationId: string, message: Message) => void) | null>(null);
-  const onMessageCompleteRef = useRef<((conversationId: string, message: Message) => void) | null>(null);
+  const onStreamCompleteRef = useRef<((conversationId: string, content: string) => void) | null>(null);
   const onAuthErrorRef = useRef<(() => void) | null>(null);
 
-  const sendMessage = useCallback(async (conversationId: string, message: string, modelId: string, maxContextSize: number, maxMessages: number) => {
+  const sendMessage = useCallback(async (
+    conversationId: string,
+    messages: Message[],
+    modelId: string,
+    maxContextSize: number,
+    maxMessages: number,
+  ) => {
     const authCode = getAuthCode();
     if (!authCode) {
-      setAuthError(true);
       onAuthErrorRef.current?.();
       return;
     }
 
     setIsStreaming(true);
     setStreamingContent('');
-    setAuthError(false);
+    const accumulated: string[] = [];
 
-    // Create a new connection for this streaming session with auth code
-    // Using accessTokenFactory is more secure than query string - token sent in header for HTTP,
-    // or as 'access_token' query param for WebSocket (browser limitation)
     const connection = new signalR.HubConnectionBuilder()
       .withUrl('/chathub', { accessTokenFactory: () => authCode })
       .build();
 
-    connection.on('ReceiveMessageChunk', (_conversationId: string, chunk: string) => {
+    connection.on('ReceiveMessageChunk', (_convId: string, chunk: string) => {
+      accumulated.push(chunk);
       setStreamingContent(prev => prev + chunk);
     });
 
-    connection.on('MessageAdded', (convId: string, msg: Message) => {
-      onMessageAddedRef.current?.(convId, msg);
-    });
-
-    connection.on('MessageComplete', (convId: string, msg: Message) => {
+    connection.on('StreamComplete', (convId: string) => {
       setIsStreaming(false);
       setStreamingContent('');
-      onMessageCompleteRef.current?.(convId, msg);
-      
-      // Disconnect after message is complete to save resources
+      onStreamCompleteRef.current?.(convId, accumulated.join(''));
       connection.stop().catch(err => console.error('Error stopping connection:', err));
     });
 
-    connection.on('Error', (_conversationId: string, error: string) => {
+    connection.on('Error', (_convId: string, error: string) => {
       console.error('Chat error:', error);
       setIsStreaming(false);
       setStreamingContent('');
-      
       if (error.includes('authentication')) {
-        setAuthError(true);
         onAuthErrorRef.current?.();
       }
-      
       connection.stop().catch(err => console.error('Error stopping connection:', err));
     });
 
     try {
       await connection.start();
-      // Use send() instead of invoke() - fire-and-forget since we get response via events
-      // This avoids error when MessageComplete handler stops the connection
-      connection.send('SendMessage', conversationId, message, modelId, maxContextSize, maxMessages);
+      connection.send('SendMessage', conversationId, messages, modelId, maxContextSize, maxMessages);
     } catch (err) {
       console.error('Failed to send message:', err);
       setIsStreaming(false);
@@ -73,12 +63,8 @@ export function useChat() {
     }
   }, []);
 
-  const setOnMessageAdded = useCallback((callback: (conversationId: string, message: Message) => void) => {
-    onMessageAddedRef.current = callback;
-  }, []);
-
-  const setOnMessageComplete = useCallback((callback: (conversationId: string, message: Message) => void) => {
-    onMessageCompleteRef.current = callback;
+  const setOnStreamComplete = useCallback((callback: (conversationId: string, content: string) => void) => {
+    onStreamCompleteRef.current = callback;
   }, []);
 
   const setOnAuthError = useCallback((callback: () => void) => {
@@ -89,9 +75,7 @@ export function useChat() {
     sendMessage,
     isStreaming,
     streamingContent,
-    authError,
-    setOnMessageAdded,
-    setOnMessageComplete,
+    setOnStreamComplete,
     setOnAuthError,
   };
 }
