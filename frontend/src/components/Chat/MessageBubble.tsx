@@ -2,9 +2,9 @@ import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Check, Sparkles } from 'lucide-react';
+import { Copy, Check, Sparkles, Brain } from 'lucide-react';
 import { useState } from 'react';
-import type { Message } from '../../types';
+import type { Memory, Message } from '../../types';
 
 interface CodeBlockProps {
   language: string;
@@ -213,8 +213,41 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
           </button>
+          {message.usedMemories && message.usedMemories.length > 0 && (
+            <MemoryPill memories={message.usedMemories} />
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function MemoryPill({ memories }: { memories: Memory[] }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setExpanded(prev => !prev)}
+        className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary
+                   text-[0.6875rem] font-semibold hover:bg-primary/15 transition-colors cursor-pointer"
+      >
+        <Brain size={11} />
+        Remembered {memories.length}
+      </button>
+      {expanded && (
+        <div className="absolute left-0 top-full mt-1 z-10 w-72 bg-surface-container-lowest
+                        border border-slate-200 rounded-xl shadow-lg p-3 space-y-2">
+          {memories.map(m => (
+            <div key={m.id} className="text-xs">
+              <span className="inline-block px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[0.625rem] font-bold uppercase tracking-wider mr-2">
+                {m.type}
+              </span>
+              <span className="text-on-surface leading-relaxed">{m.content}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

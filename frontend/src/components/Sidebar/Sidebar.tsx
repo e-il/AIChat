@@ -1,4 +1,4 @@
-import { MessageSquarePlus, Trash2, Bot, MessageCircle, Settings, MoreVertical } from 'lucide-react';
+import { MessageSquarePlus, Trash2, Bot, MessageCircle, Brain, MoreVertical } from 'lucide-react';
 import type { ConversationSummary } from '../../types';
 
 interface SidebarProps {
@@ -7,6 +7,7 @@ interface SidebarProps {
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  onOpenMemory: () => void;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -17,6 +18,7 @@ export function Sidebar({
   onSelect,
   onNew,
   onDelete,
+  onOpenMemory,
   isOpen,
   onClose,
 }: SidebarProps) {
@@ -115,14 +117,14 @@ export function Sidebar({
 
         {/* Footer Navigation */}
         <div className="mt-auto pt-4 border-t border-slate-200/50 space-y-1">
-          <a 
-            href="#" 
-            className="flex items-center gap-3 px-4 py-2 text-slate-600 
-                       hover:bg-slate-200/50 transition-colors rounded-full"
+          <button
+            onClick={onOpenMemory}
+            className="w-full flex items-center gap-3 px-4 py-2 text-slate-600
+                       hover:bg-slate-200/50 transition-colors rounded-full cursor-pointer text-left"
           >
-            <Settings size={18} />
-            <span className="text-sm">Settings</span>
-          </a>
+            <Brain size={18} />
+            <span className="text-sm">Memory</span>
+          </button>
           
           {/* User Profile */}
           <div className="flex items-center gap-3 px-4 py-4 mt-2">

@@ -3,6 +3,9 @@ export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: string;
+  // Memories injected into the system prompt for this assistant turn.
+  // Only populated on assistant messages that used memory. Persisted with the message.
+  usedMemories?: Memory[];
 }
 
 export interface Conversation {
@@ -36,8 +39,28 @@ export interface ModelsResponse {
   maxMessagesOptions: number[];
 }
 
+// Memory modes that the server accepts on SendMessage.
+// 'auto' = server retrieves relevant memory (default)
+// 'off'  = don't inject any memory for this turn
+// 'explicit' = use only the IDs in explicitMemoryIds (not yet exposed in UI)
+export type MemoryMode = 'auto' | 'off' | 'explicit';
+
 // Client-side conversation settings (stored in localStorage)
 export interface ConversationSettings {
   maxContextSize: number;
   maxMessages: number;
+  memoryMode?: MemoryMode;
+}
+
+export type MemoryType = 'fact' | 'preference' | 'summary';
+
+export interface Memory {
+  id: string;
+  userId: string;
+  type: MemoryType;
+  content: string;
+  sourceConversationId?: string | null;
+  createdAt: string;
+  lastUsedAt: string;
+  useCount: number;
 }

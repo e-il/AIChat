@@ -221,43 +221,47 @@ Return ONLY the JSON object, no commentary or code fences.
 
     /// <summary>
     /// Truncates conversation context by message count and size.
-    /// Keeps the most recent messages, removing older ones first.
+    /// System messages (e.g. the memory-augmented prompt prepended by ChatHub)
+    /// are always preserved; only user/assistant messages are trimmed.
     /// </summary>
     private List<AppChatMessage> TruncateContext(List<AppChatMessage> messages, int maxContextSize, int maxMessages)
     {
-        // First, limit by message count
-        var limitedMessages = messages.Count > maxMessages
-            ? messages.Skip(messages.Count - maxMessages).ToList()
-            : messages;
+        var systemMessages = messages.Where(m => m.Role == "system").ToList();
+        var chatMessages = messages.Where(m => m.Role != "system").ToList();
 
-        var totalSize = limitedMessages.Sum(m => m.Content?.Length ?? 0);
-
-        if (totalSize <= maxContextSize)
+        // Trim chat messages by count first (keep most recent).
+        if (chatMessages.Count > maxMessages)
         {
-            if (limitedMessages.Count < messages.Count)
-            {
-                _logger.LogInformation("Context truncated by message count: {OriginalCount} -> {NewCount}",
-                    messages.Count, limitedMessages.Count);
-            }
-            return limitedMessages;
+            chatMessages = chatMessages.Skip(chatMessages.Count - maxMessages).ToList();
         }
 
-        // Then, limit by size
-        var result = new List<AppChatMessage>();
-        var currentSize = 0;
+        // Char budget left over after system messages.
+        var systemChars = systemMessages.Sum(m => m.Content?.Length ?? 0);
+        var chatBudget = Math.Max(0, maxContextSize - systemChars);
 
-        for (var i = limitedMessages.Count - 1; i >= 0; i--)
+        // Walk backwards (newest first) and advance the start index as long as messages fit the budget.
+        // Always keep at least the newest message (safety floor for an otherwise empty conversation).
+        var startIdx = chatMessages.Count;
+        var usedChars = 0;
+        for (var i = chatMessages.Count - 1; i >= 0; i--)
         {
-            var msgSize = limitedMessages[i].Content?.Length ?? 0;
-            if (currentSize + msgSize > maxContextSize)
-                break;
-
-            result.Insert(0, limitedMessages[i]);
-            currentSize += msgSize;
+            var msgSize = chatMessages[i].Content?.Length ?? 0;
+            if (usedChars + msgSize > chatBudget && startIdx < chatMessages.Count) break;
+            startIdx = i;
+            usedChars += msgSize;
         }
 
-        _logger.LogInformation("Context truncated: {OriginalCount} messages -> {NewCount} messages, {OriginalSize} -> {NewSize} chars",
-            messages.Count, result.Count, totalSize, currentSize);
+        var keptCount = chatMessages.Count - startIdx;
+        var result = new List<AppChatMessage>(systemMessages.Count + keptCount);
+        result.AddRange(systemMessages);
+        for (var i = startIdx; i < chatMessages.Count; i++) result.Add(chatMessages[i]);
+
+        if (result.Count < messages.Count)
+        {
+            _logger.LogInformation(
+                "Context truncated: {OriginalCount} -> {NewCount} messages (system={SystemCount}, chat={ChatCount}, chars={Chars})",
+                messages.Count, result.Count, systemMessages.Count, keptCount, systemChars + usedChars);
+        }
 
         return result;
     }

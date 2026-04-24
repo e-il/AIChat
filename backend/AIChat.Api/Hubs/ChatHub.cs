@@ -111,7 +111,8 @@ public class ChatHub : Hub
                 var systemPrompt = BuildSystemPrompt(memories);
                 messagesToSend = PrependSystemMessage(messages, systemPrompt);
                 _logger.LogInformation("Injected {Count} memories into system prompt", memories.Count);
-                await Clients.Caller.SendAsync("MemoryUsed", conversationId, memories.Select(m => m.Id).ToList());
+                // Send full Memory objects so the client can surface content in the UI.
+                await Clients.Caller.SendAsync("MemoryUsed", conversationId, memories);
             }
 
             await foreach (var chunk in _openAIService.StreamChatCompletionAsync(messagesToSend, modelId, maxContextSize, maxMessages))

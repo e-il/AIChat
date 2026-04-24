@@ -14,12 +14,17 @@ export function getConversationSettings(conversationId: string, defaultContextSi
   const stored = localStorage.getItem(key);
   if (stored) {
     try {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored) as ConversationSettings;
+      return {
+        maxContextSize: parsed.maxContextSize ?? defaultContextSize,
+        maxMessages: parsed.maxMessages ?? defaultMaxMessages,
+        memoryMode: parsed.memoryMode ?? 'auto',
+      };
     } catch {
-      // Invalid JSON, return defaults
+      // Invalid JSON, fall through to defaults
     }
   }
-  return { maxContextSize: defaultContextSize, maxMessages: defaultMaxMessages };
+  return { maxContextSize: defaultContextSize, maxMessages: defaultMaxMessages, memoryMode: 'auto' };
 }
 
 // Save settings for a specific conversation

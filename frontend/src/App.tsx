@@ -1,16 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Menu, History } from 'lucide-react';
+import { Menu, History, Brain, BrainCircuit } from 'lucide-react';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatArea } from './components/Chat/ChatArea';
 import { ChatInput } from './components/Input/ChatInput';
 import { AuthCodeModal } from './components/Auth/AuthCodeModal';
+import { MemoryPanel } from './components/Memory/MemoryPanel';
 import { Dropdown } from './components/Common/Dropdown';
 import { useConversations } from './hooks/useConversations';
 import { useChat } from './hooks/useChat';
 import { chatApi } from './services/chatApi';
 import { hasAuthCode, setAuthCode, clearAuthCode } from './services/auth';
 import { getConversationSettings, saveConversationSettings, deleteConversationSettings } from './services/settings';
-import type { ModelInfo, Message } from './types';
+import type { ModelInfo, Message, MemoryMode } from './types';
 import './index.css';
 
 function App() {
@@ -22,8 +23,10 @@ function App() {
   const [maxMessagesOptions, setMaxMessagesOptions] = useState<number[]>([]);
   const [defaultMaxMessages, setDefaultMaxMessages] = useState(50);
   const [currentMaxMessages, setCurrentMaxMessages] = useState(50);
+  const [memoryMode, setMemoryMode] = useState<MemoryMode>('auto');
   const [showAuthModal, setShowAuthModal] = useState(!hasAuthCode());
   const [isAuthenticated, setIsAuthenticated] = useState(hasAuthCode());
+  const [memoryOpen, setMemoryOpen] = useState(false);
 
   const {
     conversations,
@@ -90,9 +93,11 @@ function App() {
       const settings = getConversationSettings(activeConversation.id, defaultContextSize, defaultMaxMessages);
       setCurrentContextSize(settings.maxContextSize);
       setCurrentMaxMessages(settings.maxMessages);
+      setMemoryMode(settings.memoryMode ?? 'auto');
     } else {
       setCurrentContextSize(defaultContextSize);
       setCurrentMaxMessages(defaultMaxMessages);
+      setMemoryMode('auto');
     }
   }, [activeConversation?.id, defaultContextSize, defaultMaxMessages]);
 
@@ -105,12 +110,13 @@ function App() {
 
   // Wire up SignalR callbacks
   useEffect(() => {
-    setOnStreamComplete((conversationId, content) => {
+    setOnStreamComplete((conversationId, content, usedMemories) => {
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
         content,
         timestamp: new Date().toISOString(),
+        usedMemories: usedMemories.length > 0 ? usedMemories : undefined,
       };
       addMessage(conversationId, assistantMessage);
     });
@@ -135,14 +141,22 @@ function App() {
   const handleContextSizeChange = (size: number) => {
     setCurrentContextSize(size);
     if (activeConversation) {
-      saveConversationSettings(activeConversation.id, { maxContextSize: size, maxMessages: currentMaxMessages });
+      saveConversationSettings(activeConversation.id, { maxContextSize: size, maxMessages: currentMaxMessages, memoryMode });
     }
   };
 
   const handleMaxMessagesChange = (count: number) => {
     setCurrentMaxMessages(count);
     if (activeConversation) {
-      saveConversationSettings(activeConversation.id, { maxContextSize: currentContextSize, maxMessages: count });
+      saveConversationSettings(activeConversation.id, { maxContextSize: currentContextSize, maxMessages: count, memoryMode });
+    }
+  };
+
+  const handleMemoryModeToggle = () => {
+    const next: MemoryMode = memoryMode === 'off' ? 'auto' : 'off';
+    setMemoryMode(next);
+    if (activeConversation) {
+      saveConversationSettings(activeConversation.id, { maxContextSize: currentContextSize, maxMessages: currentMaxMessages, memoryMode: next });
     }
   };
 
@@ -159,12 +173,12 @@ function App() {
       const newConv = await createConversation();
       if (!newConv) return;
       conv = newConv;
-      saveConversationSettings(newConv.id, { maxContextSize: currentContextSize, maxMessages: currentMaxMessages });
+      saveConversationSettings(newConv.id, { maxContextSize: currentContextSize, maxMessages: currentMaxMessages, memoryMode });
     }
 
     const messagesForServer = [...conv.messages, userMessage];
     addMessage(conv.id, userMessage);
-    sendMessage(conv.id, messagesForServer, selectedModel, currentContextSize, currentMaxMessages);
+    sendMessage(conv.id, messagesForServer, selectedModel, currentContextSize, currentMaxMessages, memoryMode);
   };
 
   // Memoize dropdown options
@@ -194,9 +208,12 @@ function App() {
         onSelect={handleSelectConversation}
         onNew={handleNewChat}
         onDelete={handleDeleteConversation}
+        onOpenMemory={() => setMemoryOpen(true)}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
+
+      <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 relative">
@@ -231,6 +248,21 @@ function App() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Memory mode toggle */}
+            <button
+              onClick={handleMemoryModeToggle}
+              disabled={isStreaming}
+              title={memoryMode === 'off' ? 'Memory off — click to enable' : 'Memory on — click to disable for this chat'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold
+                          transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed
+                          ${memoryMode === 'off'
+                            ? 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'
+                            : 'bg-primary/10 text-primary hover:bg-primary/15'}`}
+            >
+              {memoryMode === 'off' ? <Brain size={14} /> : <BrainCircuit size={14} />}
+              <span>{memoryMode === 'off' ? 'Memory off' : 'Memory'}</span>
+            </button>
+
             {/* Max Messages / History Button */}
             <Dropdown
               options={maxMessagesDropdownOptions}
