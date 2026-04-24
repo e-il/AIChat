@@ -1,6 +1,9 @@
 using System.ClientModel;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Azure.AI.OpenAI;
 using OpenAI.Chat;
 using AIChat.Api.Models;
@@ -115,6 +118,105 @@ public class AzureOpenAIService : IAzureOpenAIService
             }
         }
         _logger.LogInformation("Stream completed with {ChunkCount} chunks", chunkCount);
+    }
+
+    public async Task<List<ExtractedMemory>> ExtractMemoriesAsync(
+        List<AppChatMessage> messages,
+        CancellationToken cancellationToken = default)
+    {
+        var chatClient = GetChatClient(_settings.DefaultModel);
+        var promptMessages = BuildExtractionPrompt(messages);
+
+        var options = new ChatCompletionOptions
+        {
+            ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
+        };
+
+        ClientResult<ChatCompletion> result;
+        try
+        {
+            result = await chatClient.CompleteChatAsync(promptMessages, options, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Extraction LLM call failed");
+            throw;
+        }
+
+        var text = result.Value.Content.FirstOrDefault()?.Text ?? "{}";
+        _logger.LogDebug("Extraction raw response: {Text}", text);
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<ExtractionResponse>(text, ExtractionJsonOptions);
+            return parsed?.Memories ?? new List<ExtractedMemory>();
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse extraction response as JSON, returning empty. Raw: {Text}", text);
+            return new List<ExtractedMemory>();
+        }
+    }
+
+    private static readonly JsonSerializerOptions ExtractionJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+    };
+
+    private class ExtractionResponse
+    {
+        public List<ExtractedMemory> Memories { get; set; } = new();
+    }
+
+    private static List<OpenAI.Chat.ChatMessage> BuildExtractionPrompt(List<AppChatMessage> messages)
+    {
+        var transcript = new StringBuilder();
+        foreach (var msg in messages)
+        {
+            var speaker = msg.Role switch
+            {
+                "user" => "User",
+                "assistant" => "Assistant",
+                "system" => "System",
+                _ => msg.Role,
+            };
+            transcript.Append(speaker).Append(": ");
+            transcript.AppendLine(msg.Content);
+            transcript.AppendLine();
+        }
+
+        var system = """
+You analyze chat transcripts and extract durable user information worth remembering across future conversations.
+
+Output a JSON object with this exact shape:
+{
+  "memories": [
+    { "type": "fact" | "preference" | "summary", "content": "<= 300 chars" }
+  ]
+}
+
+Extract ONLY:
+- facts: user's name, role, situation, skills, enduring context
+- preferences: coding style, response style, tools they favor
+- summaries: takeaways from a long conversation worth keeping (rare)
+
+Do NOT extract:
+- Transient state (the current question, what they are doing right now)
+- PII the user did not explicitly share (emails/phones/addresses)
+- Passwords, API keys, tokens, sensitive credentials
+- Temporary context (weather, file paths, session-specific details)
+
+If nothing is worth remembering, return {"memories": []}. Empty is a valid, correct answer.
+Return ONLY the JSON object, no commentary or code fences.
+""";
+
+        return new List<OpenAI.Chat.ChatMessage>
+        {
+            new SystemChatMessage(system),
+            new UserChatMessage("Transcript:\n\n" + transcript.ToString()),
+        };
     }
 
     /// <summary>

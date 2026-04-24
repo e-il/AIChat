@@ -12,17 +12,26 @@ public class ChatHub : Hub
     private readonly IAzureOpenAIService _openAIService;
     private readonly IUserIdentityService _identity;
     private readonly IMemoryService _memory;
+    private readonly IExtractionCheckpointService _checkpoint;
+    private readonly IExtractionQueue _extractionQueue;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<ChatHub> _logger;
 
     public ChatHub(
         IAzureOpenAIService openAIService,
         IUserIdentityService identity,
         IMemoryService memory,
+        IExtractionCheckpointService checkpoint,
+        IExtractionQueue extractionQueue,
+        IConfiguration configuration,
         ILogger<ChatHub> logger)
     {
         _openAIService = openAIService;
         _identity = identity;
         _memory = memory;
+        _checkpoint = checkpoint;
+        _extractionQueue = extractionQueue;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -94,22 +103,22 @@ public class ChatHub : Hub
 
         try
         {
-            // Resolve memory based on mode
+            // Resolve memory based on mode and inject into system prompt
             var memories = await ResolveMemoriesAsync(userId, lastMessage.Content, memoryMode, explicitMemoryIds);
+            var messagesToSend = messages;
             if (memories.Count > 0)
             {
                 var systemPrompt = BuildSystemPrompt(memories);
-                messages = PrependSystemMessage(messages, systemPrompt);
+                messagesToSend = PrependSystemMessage(messages, systemPrompt);
                 _logger.LogInformation("Injected {Count} memories into system prompt", memories.Count);
                 await Clients.Caller.SendAsync("MemoryUsed", conversationId, memories.Select(m => m.Id).ToList());
             }
 
-            await foreach (var chunk in _openAIService.StreamChatCompletionAsync(messages, modelId, maxContextSize, maxMessages))
+            await foreach (var chunk in _openAIService.StreamChatCompletionAsync(messagesToSend, modelId, maxContextSize, maxMessages))
             {
                 await Clients.Caller.SendAsync("ReceiveMessageChunk", conversationId, chunk);
             }
 
-            // Mark memories as used after successful stream
             if (memories.Count > 0)
             {
                 await _memory.MarkUsedAsync(userId, memories.Select(m => m.Id));
@@ -117,6 +126,10 @@ public class ChatHub : Hub
 
             _logger.LogInformation("Stream complete for conversation {ConversationId}", conversationId);
             await Clients.Caller.SendAsync("StreamComplete", conversationId);
+
+            // After successful stream, check whether to queue extraction.
+            // messages is the client-sent list (without our injected system prompt).
+            await TryTriggerExtractionAsync(userId, conversationId, messages);
         }
         catch (Exception ex)
         {
@@ -139,6 +152,51 @@ public class ChatHub : Hub
                 : await _memory.GetByIdsAsync(userId, explicitMemoryIds),
             _ => await _memory.RetrieveAsync(userId, query),
         };
+    }
+
+    private async Task TryTriggerExtractionAsync(string userId, string conversationId, List<ChatMessage> messages)
+    {
+        var threshold = _configuration.GetValue<int>("Memory:ExtractionThreshold", 10);
+
+        var checkpoint = await _checkpoint.GetAsync(userId, conversationId);
+        var unextracted = GetUnextractedMessages(messages, checkpoint?.LastExtractedMessageId);
+
+        if (unextracted.Count < threshold)
+        {
+            _logger.LogDebug("Extraction not triggered: {Count} unextracted < threshold {Threshold}",
+                unextracted.Count, threshold);
+            return;
+        }
+
+        var lastMessageId = unextracted[^1].Id;
+        var enqueued = _extractionQueue.TryEnqueue(new ExtractionJob
+        {
+            UserId = userId,
+            ConversationId = conversationId,
+            Messages = unextracted,
+            LastMessageId = lastMessageId,
+        });
+
+        if (enqueued)
+        {
+            _logger.LogInformation("Queued extraction: user={UserId}, conversation={ConversationId}, messages={Count}",
+                userId, conversationId, unextracted.Count);
+        }
+        else
+        {
+            _logger.LogDebug("Extraction already pending for conversation {ConversationId}, skipped", conversationId);
+        }
+    }
+
+    private static List<ChatMessage> GetUnextractedMessages(List<ChatMessage> messages, string? lastExtractedMessageId)
+    {
+        if (string.IsNullOrEmpty(lastExtractedMessageId)) return messages;
+
+        var idx = messages.FindIndex(m => m.Id == lastExtractedMessageId);
+        // Checkpoint id not found in the current history -- treat all as unextracted.
+        if (idx < 0) return messages;
+
+        return messages.Skip(idx + 1).ToList();
     }
 
     private static string BuildSystemPrompt(List<Memory> memories)

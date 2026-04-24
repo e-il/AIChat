@@ -29,6 +29,13 @@ builder.Services.AddSignalR().AddJsonProtocol(options =>
 builder.Services.AddSingleton<IUserIdentityService, UserIdentityService>();
 builder.Services.AddSingleton<IAzureOpenAIService, AzureOpenAIService>();
 builder.Services.AddSingleton<IMemoryService, MemoryService>();
+builder.Services.AddSingleton<IExtractionCheckpointService, ExtractionCheckpointService>();
+// ExtractionQueue has two surfaces pointing at the same singleton: IExtractionQueue
+// (enqueue-only, injected into ChatHub) and the concrete type (full access to
+// internal Reader/Release, injected into ExtractionWorker).
+builder.Services.AddSingleton<ExtractionQueue>();
+builder.Services.AddSingleton<IExtractionQueue>(sp => sp.GetRequiredService<ExtractionQueue>());
+builder.Services.AddHostedService<ExtractionWorker>();
 
 // Configure CORS
 builder.Services.AddCors(options =>
