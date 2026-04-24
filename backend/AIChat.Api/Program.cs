@@ -4,12 +4,19 @@ using AIChat.Api.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Additional config files. Env vars are re-registered after so they continue to win.
+builder.Configuration
+    .AddJsonFile("config/users.json", optional: false, reloadOnChange: true)
+    .AddJsonFile("config/models.json", optional: false, reloadOnChange: true)
+    .AddEnvironmentVariables();
+
 // Add services to the container
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddSignalR();
 
 // Register application services
+builder.Services.AddSingleton<IUserIdentityService, UserIdentityService>();
 builder.Services.AddSingleton<IAzureOpenAIService, AzureOpenAIService>();
 
 // Configure CORS

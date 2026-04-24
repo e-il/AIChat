@@ -24,7 +24,7 @@ public class AzureOpenAIService : IAzureOpenAIService
         // Override with environment variables if set
         var envEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT");
         var envApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY");
-        
+
         if (!string.IsNullOrEmpty(envEndpoint)) _settings.Endpoint = envEndpoint;
         if (!string.IsNullOrEmpty(envApiKey)) _settings.ApiKey = envApiKey;
 
@@ -55,7 +55,7 @@ public class AzureOpenAIService : IAzureOpenAIService
             var model = _settings.Models.FirstOrDefault(m => m.Id == id)
                 ?? _settings.Models.FirstOrDefault(m => m.Id == _settings.DefaultModel)
                 ?? _settings.Models.First();
-            
+
             return _client.GetChatClient(model.DeploymentName);
         });
     }
@@ -69,11 +69,11 @@ public class AzureOpenAIService : IAzureOpenAIService
     {
         // Truncate context by message count first, then by size
         var truncatedMessages = TruncateContext(messages, maxContextSize, maxMessages);
-        _logger.LogInformation("Starting stream for model {ModelId} with {MessageCount} messages (truncated from {OriginalCount})", 
+        _logger.LogInformation("Starting stream for model {ModelId} with {MessageCount} messages (truncated from {OriginalCount})",
             modelId, truncatedMessages.Count, messages.Count);
-        
+
         var chatClient = GetChatClient(modelId);
-        
+
         var chatMessages = truncatedMessages.Select(m => m.Role switch
         {
             "system" => new SystemChatMessage(m.Content) as OpenAI.Chat.ChatMessage,
@@ -88,9 +88,9 @@ public class AzureOpenAIService : IAzureOpenAIService
         }
 
         _logger.LogInformation("Calling Azure OpenAI with {Count} messages", chatMessages.Count);
-        
+
         AsyncCollectionResult<StreamingChatCompletionUpdate> updates;
-        
+
         try
         {
             updates = chatClient.CompleteChatStreamingAsync(chatMessages, cancellationToken: cancellationToken);
@@ -124,17 +124,17 @@ public class AzureOpenAIService : IAzureOpenAIService
     private List<AppChatMessage> TruncateContext(List<AppChatMessage> messages, int maxContextSize, int maxMessages)
     {
         // First, limit by message count
-        var limitedMessages = messages.Count > maxMessages 
-            ? messages.Skip(messages.Count - maxMessages).ToList() 
+        var limitedMessages = messages.Count > maxMessages
+            ? messages.Skip(messages.Count - maxMessages).ToList()
             : messages;
 
         var totalSize = limitedMessages.Sum(m => m.Content?.Length ?? 0);
-        
+
         if (totalSize <= maxContextSize)
         {
             if (limitedMessages.Count < messages.Count)
             {
-                _logger.LogInformation("Context truncated by message count: {OriginalCount} -> {NewCount}", 
+                _logger.LogInformation("Context truncated by message count: {OriginalCount} -> {NewCount}",
                     messages.Count, limitedMessages.Count);
             }
             return limitedMessages;
@@ -143,13 +143,13 @@ public class AzureOpenAIService : IAzureOpenAIService
         // Then, limit by size
         var result = new List<AppChatMessage>();
         var currentSize = 0;
-        
+
         for (var i = limitedMessages.Count - 1; i >= 0; i--)
         {
             var msgSize = limitedMessages[i].Content?.Length ?? 0;
             if (currentSize + msgSize > maxContextSize)
                 break;
-                
+
             result.Insert(0, limitedMessages[i]);
             currentSize += msgSize;
         }

@@ -1,18 +1,19 @@
+using AIChat.Api.Services;
+
 namespace AIChat.Api.Middleware;
 
 public class AuthCodeMiddleware
 {
-    private readonly RequestDelegate _next;
-    private readonly HashSet<string> _validCodes;
+    public const string UserIdItemKey = "userId";
 
-    public AuthCodeMiddleware(RequestDelegate next, IConfiguration configuration)
+    private readonly RequestDelegate _next;
+
+    public AuthCodeMiddleware(RequestDelegate next)
     {
         _next = next;
-        var codes = configuration.GetSection("AuthCodes").Get<string[]>() ?? [];
-        _validCodes = new HashSet<string>(codes, StringComparer.Ordinal);
     }
 
-    public async Task InvokeAsync(HttpContext context)
+    public async Task InvokeAsync(HttpContext context, IUserIdentityService identity)
     {
         // Skip auth for SignalR negotiate (auth handled in hub)
         if (context.Request.Path.StartsWithSegments("/chathub"))
@@ -21,16 +22,17 @@ public class AuthCodeMiddleware
             return;
         }
 
-        // Check for auth code in header
         var authCode = context.Request.Headers["X-Auth-Code"].FirstOrDefault();
+        var userId = identity.ResolveUserId(authCode);
 
-        if (string.IsNullOrEmpty(authCode) || !_validCodes.Contains(authCode))
+        if (userId is null)
         {
             context.Response.StatusCode = 401;
             await context.Response.WriteAsJsonAsync(new { error = "Invalid or missing authentication code" });
             return;
         }
 
+        context.Items[UserIdItemKey] = userId;
         await _next(context);
     }
 }

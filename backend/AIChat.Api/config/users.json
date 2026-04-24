@@ -1,0 +1,7 @@
+{
+  "Users": [
+    { "Id": "user-1", "AuthCodes": ["demo123"] },
+    { "Id": "user-2", "AuthCodes": ["admin456"] },
+    { "Id": "user-3", "AuthCodes": ["user789"] }
+  ]
+}

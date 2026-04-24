@@ -32,9 +32,10 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - AzureOpenAI__Endpoint=${AZURE_OPENAI_ENDPOINT}
       - AzureOpenAI__ApiKey=${AZURE_OPENAI_API_KEY}
-      - AuthCodes__0=${AUTH_CODE_1:-demo123}
-      - AuthCodes__1=${AUTH_CODE_2:-admin456}
-      - AuthCodes__2=${AUTH_CODE_3:-user789}
+    volumes:
+      # Named volume: first run populates from image's /app/config; edits persist.
+      # Reset to image defaults with: docker compose down -v
+      - aichat-config:/app/config
     expose:
       - "5000"
     restart: unless-stopped
@@ -56,3 +57,4 @@ services:
 
 volumes:
   letsencrypt:
+  aichat-config:

@@ -8,9 +8,11 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - AzureOpenAI__Endpoint=${AZURE_OPENAI_ENDPOINT}
       - AzureOpenAI__ApiKey=${AZURE_OPENAI_API_KEY}
-      - AuthCodes__0=${AUTH_CODE_1:-demo123}
-      - AuthCodes__1=${AUTH_CODE_2:-admin456}
-      - AuthCodes__2=${AUTH_CODE_3:-user789}
+    volumes:
+      # Named volume: on first creation Docker populates it from the image's /app/config.
+      # Edits persist across restarts. To reset to image defaults: docker compose down -v.
+      # To edit: docker compose exec backend sh  (vi is not in the image; see README for details).
+      - aichat-config:/app/config
     ports:
       - "5000:5000"
     restart: unless-stopped
@@ -25,3 +27,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  aichat-config:

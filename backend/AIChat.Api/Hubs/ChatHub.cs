@@ -6,22 +6,20 @@ namespace AIChat.Api.Hubs;
 
 public class ChatHub : Hub
 {
-    private readonly IAzureOpenAIService _openAIService;
-    private readonly ILogger<ChatHub> _logger;
-    private readonly HashSet<string> _validCodes;
+    public const string UserIdItemKey = "userId";
 
-    // Track authenticated connections
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _authenticatedConnections = new();
+    private readonly IAzureOpenAIService _openAIService;
+    private readonly IUserIdentityService _identity;
+    private readonly ILogger<ChatHub> _logger;
 
     public ChatHub(
         IAzureOpenAIService openAIService,
-        ILogger<ChatHub> logger,
-        IConfiguration configuration)
+        IUserIdentityService identity,
+        ILogger<ChatHub> logger)
     {
         _openAIService = openAIService;
+        _identity = identity;
         _logger = logger;
-        var codes = configuration.GetSection("AuthCodes").Get<string[]>() ?? [];
-        _validCodes = new HashSet<string>(codes, StringComparer.Ordinal);
     }
 
     private string? GetAuthCodeFromQuery()
@@ -32,35 +30,30 @@ public class ChatHub : Hub
         return httpContext?.Request.Query["access_token"].FirstOrDefault();
     }
 
+    private string? GetUserId() => Context.Items[UserIdItemKey] as string;
+
     public override async Task OnConnectedAsync()
     {
         var authCode = GetAuthCodeFromQuery();
-        _logger.LogInformation("SignalR connect - authCode: {AuthCode}, valid codes count: {Count}",
-            authCode ?? "null", _validCodes.Count);
+        var userId = _identity.ResolveUserId(authCode);
 
-        if (string.IsNullOrEmpty(authCode) || !_validCodes.Contains(authCode))
+        if (userId is null)
         {
             _logger.LogWarning("SignalR auth failed on connect, aborting");
             Context.Abort();
             return;
         }
 
-        _authenticatedConnections[Context.ConnectionId] = authCode;
-        _logger.LogInformation("SignalR auth succeeded for connection {ConnectionId}", Context.ConnectionId);
+        Context.Items[UserIdItemKey] = userId;
+        _logger.LogInformation("SignalR auth succeeded for user {UserId} on connection {ConnectionId}", userId, Context.ConnectionId);
 
         await base.OnConnectedAsync();
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        _authenticatedConnections.TryRemove(Context.ConnectionId, out _);
         _logger.LogDebug("Client disconnected: {ConnectionId}", Context.ConnectionId);
         await base.OnDisconnectedAsync(exception);
-    }
-
-    private bool IsConnectionAuthenticated()
-    {
-        return _authenticatedConnections.ContainsKey(Context.ConnectionId);
     }
 
     public async Task SendMessage(
@@ -70,16 +63,17 @@ public class ChatHub : Hub
         int maxContextSize = 100000,
         int maxMessages = 50)
     {
-        _logger.LogInformation("SendMessage called: conversationId={ConversationId}, message count={Count}, modelId={ModelId}, maxContextSize={MaxContextSize}, maxMessages={MaxMessages}",
-            conversationId, messages?.Count ?? 0, modelId, maxContextSize, maxMessages);
-
-        if (!IsConnectionAuthenticated())
+        var userId = GetUserId();
+        if (userId is null)
         {
             _logger.LogWarning("SendMessage rejected - connection not authenticated");
             await Clients.Caller.SendAsync("Error", conversationId, "Invalid authentication code");
             Context.Abort();
             return;
         }
+
+        _logger.LogInformation("SendMessage: user={UserId}, conversationId={ConversationId}, message count={Count}, modelId={ModelId}, maxContextSize={MaxContextSize}, maxMessages={MaxMessages}",
+            userId, conversationId, messages?.Count ?? 0, modelId, maxContextSize, maxMessages);
 
         if (messages is null || messages.Count == 0)
         {
