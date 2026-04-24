@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Serilog;
 using AIChat.Api.Hubs;
 using AIChat.Api.Services;
 using AIChat.Api.Middleware;
@@ -10,6 +11,9 @@ builder.Configuration
     .AddJsonFile("config/users.json", optional: false, reloadOnChange: true)
     .AddJsonFile("config/models.json", optional: false, reloadOnChange: true)
     .AddEnvironmentVariables();
+
+// Serilog: console + hourly-rolling file. Config lives in appsettings.json under "Serilog".
+builder.Host.UseSerilog((ctx, _, cfg) => cfg.ReadFrom.Configuration(ctx.Configuration));
 
 // Add services to the container
 builder.Services.AddControllers().AddJsonOptions(options =>

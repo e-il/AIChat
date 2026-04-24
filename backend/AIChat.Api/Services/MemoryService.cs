@@ -23,10 +23,12 @@ public class MemoryService : IMemoryService
 
     private readonly string _memoryDir;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
+    private readonly IAzureOpenAIService _openAI;
     private readonly ILogger<MemoryService> _logger;
 
-    public MemoryService(IConfiguration configuration, ILogger<MemoryService> logger)
+    public MemoryService(IAzureOpenAIService openAI, ILogger<MemoryService> logger)
     {
+        _openAI = openAI;
         _logger = logger;
         _memoryDir = Path.Combine("data", "memory");
         Directory.CreateDirectory(_memoryDir);
@@ -53,9 +55,12 @@ public class MemoryService : IMemoryService
         return memories.Where(m => idSet.Contains(m.Id)).ToList();
     }
 
-    public Task<Memory> CreateAsync(string userId, MemoryType type, string content, string? sourceConversationId)
+    public async Task<Memory> CreateAsync(string userId, MemoryType type, string content, string? sourceConversationId)
     {
-        return WithLock(userId, async () =>
+        // Generate embedding outside the per-user lock to avoid holding it during an LLM call.
+        var embedding = await _openAI.TryGenerateEmbeddingAsync(content);
+
+        return await WithLock(userId, async () =>
         {
             var memories = await LoadAsync(userId);
             var memory = new Memory
@@ -64,6 +69,7 @@ public class MemoryService : IMemoryService
                 Type = type,
                 Content = content,
                 SourceConversationId = sourceConversationId,
+                Embedding = embedding,
             };
             memories.Add(memory);
             await SaveAsync(userId, memories);
@@ -71,16 +77,28 @@ public class MemoryService : IMemoryService
         });
     }
 
-    public Task<Memory?> UpdateAsync(string userId, string id, MemoryType? type, string? content)
+    public async Task<Memory?> UpdateAsync(string userId, string id, MemoryType? type, string? content)
     {
-        return WithLock(userId, async () =>
+        // Regenerate embedding when content changes (done outside the lock).
+        float[]? newEmbedding = null;
+        var contentChanged = content is not null;
+        if (contentChanged)
+        {
+            newEmbedding = await _openAI.TryGenerateEmbeddingAsync(content!);
+        }
+
+        return await WithLock(userId, async () =>
         {
             var memories = await LoadAsync(userId);
             var memory = memories.FirstOrDefault(m => m.Id == id);
             if (memory is null) return (Memory?)null;
 
             if (type.HasValue) memory.Type = type.Value;
-            if (content is not null) memory.Content = content;
+            if (contentChanged)
+            {
+                memory.Content = content!;
+                memory.Embedding = newEmbedding;
+            }
 
             await SaveAsync(userId, memories);
             return memory;
@@ -105,12 +123,15 @@ public class MemoryService : IMemoryService
         var all = await WithLock(userId, () => LoadAsync(userId));
         if (all.Count == 0) return new List<Memory>();
 
+        // Prefer embedding-based similarity; fall back to keyword overlap when either
+        // the query or the memory has no embedding.
+        var queryEmbedding = await _openAI.TryGenerateEmbeddingAsync(query);
         var queryTokens = Tokenize(query);
 
         var preferences = all.Where(m => m.Type == MemoryType.Preference).ToList();
         var scorable = all
             .Where(m => m.Type != MemoryType.Preference)
-            .Select(m => new { Memory = m, Score = ScoreMemory(m, queryTokens) })
+            .Select(m => new { Memory = m, Score = ScoreMemory(m, queryEmbedding, queryTokens) })
             .OrderByDescending(x => x.Score)
             .Take(limit)
             .Select(x => x.Memory)
@@ -234,10 +255,21 @@ public class MemoryService : IMemoryService
 
     // ---------- scoring ----------
 
-    private static double ScoreMemory(Memory memory, HashSet<string> queryTokens)
+    private static double ScoreMemory(Memory memory, float[]? queryEmbedding, HashSet<string> queryTokens)
     {
-        var memoryTokens = Tokenize(memory.Content);
-        var overlap = memoryTokens.Intersect(queryTokens).Count();
+        // Relevance term: cosine similarity when both sides have embeddings, else keyword overlap.
+        double relevance;
+        if (queryEmbedding is not null && memory.Embedding is not null && memory.Embedding.Length == queryEmbedding.Length)
+        {
+            // Cosine similarity is in [-1, 1] (effectively [0, 1] for text). Scale to match keyword overlap magnitude.
+            relevance = CosineSimilarity(memory.Embedding, queryEmbedding) * 5.0;
+        }
+        else
+        {
+            var memoryTokens = Tokenize(memory.Content);
+            relevance = memoryTokens.Intersect(queryTokens).Count();
+        }
+
         var daysOld = (DateTime.UtcNow - memory.CreatedAt).TotalDays;
         var recency = Math.Exp(-daysOld / 30.0);
         var usage = Math.Log(memory.UseCount + 1) / Math.Log(10);
@@ -247,7 +279,20 @@ public class MemoryService : IMemoryService
             MemoryType.Summary => 0.7,
             _ => 0.0,
         };
-        return overlap * 3.0 + recency * 1.0 + usage * 0.5 + typeWeight;
+        return relevance * 3.0 + recency * 1.0 + usage * 0.5 + typeWeight;
+    }
+
+    private static double CosineSimilarity(float[] a, float[] b)
+    {
+        double dot = 0, magA = 0, magB = 0;
+        for (var i = 0; i < a.Length; i++)
+        {
+            dot += a[i] * b[i];
+            magA += a[i] * a[i];
+            magB += b[i] * b[i];
+        }
+        var denom = Math.Sqrt(magA) * Math.Sqrt(magB);
+        return denom == 0 ? 0 : dot / denom;
     }
 
     private static readonly Regex TokenSplit = new(@"\W+", RegexOptions.Compiled);

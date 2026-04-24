@@ -17,4 +17,8 @@ public class Memory
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastUsedAt { get; set; } = DateTime.UtcNow;
     public int UseCount { get; set; }
+    // Embedding vector for cosine-similarity retrieval. Null for legacy entries
+    // or when the embedding deployment is not configured; service falls back
+    // to keyword-overlap scoring in those cases.
+    public float[]? Embedding { get; set; }
 }

@@ -28,20 +28,42 @@ public interface IExtractionQueue
 // at the same singleton instance.
 public class ExtractionQueue : IExtractionQueue
 {
+    // A lease older than this is treated as abandoned (worker crashed / hung).
+    // Next enqueue for the same conversation replaces it instead of being dropped.
+    private static readonly TimeSpan StaleLeaseTimeout = TimeSpan.FromMinutes(5);
+
     private readonly Channel<ExtractionJob> _channel = Channel.CreateUnbounded<ExtractionJob>();
-    private readonly ConcurrentDictionary<string, byte> _pending = new();
+    private readonly ConcurrentDictionary<string, DateTime> _pending = new();
 
     public bool TryEnqueue(ExtractionJob job)
     {
-        // Dedup by conversationId: if a job is already pending/running for this conversation, drop.
-        if (!_pending.TryAdd(job.ConversationId, 0)) return false;
+        var now = DateTime.UtcNow;
 
-        if (!_channel.Writer.TryWrite(job))
+        // Fast path: no existing lease.
+        if (_pending.TryAdd(job.ConversationId, now))
         {
-            _pending.TryRemove(job.ConversationId, out _);
-            return false;
+            return TryWriteOrRollback(job, now);
         }
-        return true;
+
+        // Existing lease: take over only if it's stale.
+        if (_pending.TryGetValue(job.ConversationId, out var acquiredAt)
+            && now - acquiredAt >= StaleLeaseTimeout
+            && _pending.TryUpdate(job.ConversationId, now, acquiredAt))
+        {
+            return TryWriteOrRollback(job, now);
+        }
+
+        return false;
+    }
+
+    private bool TryWriteOrRollback(ExtractionJob job, DateTime now)
+    {
+        if (_channel.Writer.TryWrite(job)) return true;
+
+        // Only clear our own lease (don't stomp a newer one from a concurrent caller).
+        ((ICollection<KeyValuePair<string, DateTime>>)_pending)
+            .Remove(new KeyValuePair<string, DateTime>(job.ConversationId, now));
+        return false;
     }
 
     internal ChannelReader<ExtractionJob> Reader => _channel.Reader;

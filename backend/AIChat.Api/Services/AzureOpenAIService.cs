@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.AI.OpenAI;
 using OpenAI.Chat;
+using OpenAI.Embeddings;
 using AIChat.Api.Models;
 using AppChatMessage = AIChat.Api.Models.ChatMessage;
 
@@ -15,6 +16,7 @@ public class AzureOpenAIService : IAzureOpenAIService
 {
     private readonly AzureOpenAIClient _client;
     private readonly ConcurrentDictionary<string, ChatClient> _chatClients = new();
+    private readonly Lazy<EmbeddingClient?> _embeddingClient;
     private readonly AzureOpenAISettings _settings;
     private readonly ILogger<AzureOpenAIService> _logger;
 
@@ -37,6 +39,11 @@ public class AzureOpenAIService : IAzureOpenAIService
         }
 
         _client = new AzureOpenAIClient(new Uri(_settings.Endpoint), new ApiKeyCredential(_settings.ApiKey));
+
+        _embeddingClient = new Lazy<EmbeddingClient?>(() =>
+            string.IsNullOrWhiteSpace(_settings.EmbeddingDeploymentName)
+                ? null
+                : _client.GetEmbeddingClient(_settings.EmbeddingDeploymentName));
     }
 
     public List<ModelInfo> GetAvailableModels() => _settings.Models;
@@ -155,6 +162,26 @@ public class AzureOpenAIService : IAzureOpenAIService
         {
             _logger.LogWarning(ex, "Failed to parse extraction response as JSON, returning empty. Raw: {Text}", text);
             return new List<ExtractedMemory>();
+        }
+    }
+
+    public async Task<float[]?> TryGenerateEmbeddingAsync(string text, CancellationToken cancellationToken = default)
+    {
+        var client = _embeddingClient.Value;
+        if (client is null || string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = await client.GenerateEmbeddingAsync(text, cancellationToken: cancellationToken);
+            return result.Value.ToFloats().ToArray();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Embedding generation failed; retrieval will fall back to keyword overlap");
+            return null;
         }
     }
 

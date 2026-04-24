@@ -17,4 +17,10 @@ public interface IAzureOpenAIService
     /// Returns an empty list if nothing is worth remembering — empty is a valid, successful result.
     /// </summary>
     Task<List<ExtractedMemory>> ExtractMemoriesAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Generates an embedding vector for the given text. Returns null if embeddings
+    /// aren't configured or the call fails (best effort; callers should fall back).
+    /// </summary>
+    Task<float[]?> TryGenerateEmbeddingAsync(string text, CancellationToken cancellationToken = default);
 }

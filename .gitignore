@@ -424,3 +424,6 @@ FodyWeavers.xsd
 # Runtime memory storage (per-user JSON files)
 backend/AIChat.Api/data/
 backend/AIChat.Api/Data/
+
+# Serilog rolling log files
+backend/AIChat.Api/logs/

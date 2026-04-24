@@ -18,4 +18,7 @@ public class AzureOpenAISettings
     public List<int> ContextSizeOptions { get; set; } = new();
     public int DefaultMaxMessages { get; set; } = 50;
     public List<int> MaxMessagesOptions { get; set; } = new();
+    // Deployment name for the embedding model (e.g. "text-embedding-3-small").
+    // When empty, memory retrieval falls back to keyword overlap scoring.
+    public string? EmbeddingDeploymentName { get; set; }
 }
