@@ -420,3 +420,7 @@ FodyWeavers.xsd
 *.db
 *.db-shm
 *.db-wal
+
+# Runtime memory storage (per-user JSON files)
+backend/AIChat.Api/data/
+backend/AIChat.Api/Data/

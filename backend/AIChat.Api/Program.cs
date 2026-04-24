@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using AIChat.Api.Hubs;
 using AIChat.Api.Services;
 using AIChat.Api.Middleware;
@@ -11,13 +12,23 @@ builder.Configuration
     .AddEnvironmentVariables();
 
 // Add services to the container
-builder.Services.AddControllers();
+builder.Services.AddControllers().AddJsonOptions(options =>
+{
+    // Serialize enums as camelCase strings ("fact", "preference", "summary")
+    options.JsonSerializerOptions.Converters.Add(
+        new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
+});
 builder.Services.AddOpenApi();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR().AddJsonProtocol(options =>
+{
+    options.PayloadSerializerOptions.Converters.Add(
+        new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
+});
 
 // Register application services
 builder.Services.AddSingleton<IUserIdentityService, UserIdentityService>();
 builder.Services.AddSingleton<IAzureOpenAIService, AzureOpenAIService>();
+builder.Services.AddSingleton<IMemoryService, MemoryService>();
 
 // Configure CORS
 builder.Services.AddCors(options =>

@@ -36,6 +36,8 @@ services:
       # Named volume: first run populates from image's /app/config; edits persist.
       # Reset to image defaults with: docker compose down -v
       - aichat-config:/app/config
+      # Memory files (one JSON per user). Must persist across container rebuilds.
+      - aichat-memory:/app/data/memory
     expose:
       - "5000"
     restart: unless-stopped
@@ -58,3 +60,4 @@ services:
 volumes:
   letsencrypt:
   aichat-config:
+  aichat-memory:
