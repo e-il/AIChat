@@ -9,12 +9,13 @@ services:
       - AzureOpenAI__Endpoint=${AZURE_OPENAI_ENDPOINT}
       - AzureOpenAI__ApiKey=${AZURE_OPENAI_API_KEY}
     volumes:
-      # Named volume for config (users.json, models.json). On first creation Docker
-      # populates it from the image's /app/config. Edits persist across restarts.
-      # To reset to image defaults: docker compose down -v.
-      - aichat-config:/app/config
+      # Bind mount for config (users.json, models.json) — source files live on the host
+      # so edits in the repo are reflected in the container without rebuilding.
+      - ./backend/AIChat.Api/config:/app/config
       # Memory files (one JSON per user). Must persist across container rebuilds.
       - aichat-memory:/app/data/memory
+      # Generated + uploaded images, scoped per user. Must persist across container rebuilds.
+      - aichat-images:/app/data/images
     ports:
       - "5000:5000"
     restart: unless-stopped
@@ -31,5 +32,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  aichat-config:
   aichat-memory:
+  aichat-images:

@@ -2,9 +2,10 @@ import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Check, Sparkles, Brain } from 'lucide-react';
+import { Copy, Check, Sparkles, Brain, ImageIcon, Loader2 } from 'lucide-react';
 import { useState } from 'react';
-import type { Memory, Message } from '../../types';
+import type { Memory, Message, MessageAttachment } from '../../types';
+import { imagesApi } from '../../services/imagesApi';
 
 interface CodeBlockProps {
   language: string;
@@ -166,19 +167,27 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const attachments = message.attachments ?? [];
+  const hasContent = (message.content ?? '').trim().length > 0;
+
   if (isUser) {
     // User message - right aligned with gradient
     return (
       <div className="flex flex-row-reverse gap-4 group">
-        <div className="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden self-start mt-1 
+        <div className="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden self-start mt-1
                         bg-gradient-to-br from-primary to-primary-container flex items-center justify-center">
           <span className="text-white text-sm font-semibold">U</span>
         </div>
         <div className="flex flex-col gap-2 max-w-[85%] items-end">
-          <div className="bg-gradient-to-br from-primary to-primary-container text-on-primary 
-                          p-4 rounded-xl rounded-br-sm shadow-md">
-            <p className="text-sm leading-relaxed font-body whitespace-pre-wrap">{message.content}</p>
-          </div>
+          {attachments.length > 0 && (
+            <AttachmentGrid attachments={attachments} alignment="right" />
+          )}
+          {hasContent && (
+            <div className="bg-gradient-to-br from-primary to-primary-container text-on-primary
+                            p-4 rounded-xl rounded-br-sm shadow-md">
+              <p className="text-sm leading-relaxed font-body whitespace-pre-wrap">{message.content}</p>
+            </div>
+          )}
           <span className="text-[0.6875rem] text-on-surface-variant font-medium mr-1">
             {formatTime(message.timestamp)}
           </span>
@@ -190,18 +199,23 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   // AI message - left aligned with surface background
   return (
     <div className="flex gap-4 group">
-      <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-surface-container-highest 
+      <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-surface-container-highest
                       flex items-center justify-center text-primary self-start mt-1">
         <Sparkles size={18} className="fill-primary" />
       </div>
       <div className="flex flex-col gap-2 max-w-[85%]">
-        <div className="bg-surface-container-high text-on-surface p-4 rounded-xl rounded-bl-sm relative">
-          <div className="markdown-content text-sm leading-relaxed font-body">
-            <ReactMarkdown components={markdownComponents}>
-              {message.content}
-            </ReactMarkdown>
+        {hasContent && (
+          <div className="bg-surface-container-high text-on-surface p-4 rounded-xl rounded-bl-sm relative">
+            <div className="markdown-content text-sm leading-relaxed font-body">
+              <ReactMarkdown components={markdownComponents}>
+                {message.content}
+              </ReactMarkdown>
+            </div>
           </div>
-        </div>
+        )}
+        {attachments.length > 0 && (
+          <AttachmentGrid attachments={attachments} alignment="left" />
+        )}
         <div className="flex items-center gap-2 ml-1">
           <span className="text-[0.6875rem] text-on-surface-variant font-medium">
             {formatTime(message.timestamp)}
@@ -218,6 +232,89 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function AttachmentGrid({ attachments, alignment }: { attachments: MessageAttachment[]; alignment: 'left' | 'right' }) {
+  return (
+    <div
+      className={`grid gap-2 ${
+        attachments.length === 1 ? 'grid-cols-1' : 'grid-cols-2'
+      } ${alignment === 'right' ? 'justify-items-end' : 'justify-items-start'}`}
+    >
+      {attachments.map(a => (
+        <ImageAttachmentView key={a.id} attachment={a} />
+      ))}
+    </div>
+  );
+}
+
+function ImageAttachmentView({ attachment }: { attachment: MessageAttachment }) {
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+
+  if (attachment.type !== 'image') {
+    return (
+      <div className="px-3 py-2 rounded-lg bg-surface-container-high text-xs text-on-surface-variant flex items-center gap-2">
+        <ImageIcon size={14} /> Unsupported attachment
+      </div>
+    );
+  }
+
+  const src = imagesApi.buildAuthedUrl(attachment.url);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setLightboxOpen(true)}
+        title={attachment.prompt ?? 'Image'}
+        className="relative block max-w-md rounded-xl overflow-hidden border border-outline-variant/20
+                   bg-surface-container-high hover:shadow-md transition-shadow cursor-zoom-in"
+        style={{ aspectRatio: attachment.width && attachment.height ? `${attachment.width} / ${attachment.height}` : undefined }}
+      >
+        {!loaded && !errored && (
+          <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant">
+            <Loader2 size={20} className="animate-spin" />
+          </div>
+        )}
+        {errored ? (
+          <div className="aspect-square w-48 flex flex-col items-center justify-center gap-1 text-on-surface-variant text-xs">
+            <ImageIcon size={20} />
+            <span>Image unavailable</span>
+          </div>
+        ) : (
+          <img
+            src={src}
+            alt={attachment.prompt ?? ''}
+            loading="lazy"
+            onLoad={() => setLoaded(true)}
+            onError={() => setErrored(true)}
+            className={`block w-full h-full object-cover transition-opacity ${loaded ? 'opacity-100' : 'opacity-0'}`}
+          />
+        )}
+      </button>
+      {lightboxOpen && (
+        <Lightbox src={src} alt={attachment.prompt ?? ''} onClose={() => setLightboxOpen(false)} />
+      )}
+    </>
+  );
+}
+
+function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6 cursor-zoom-out"
+    >
+      <img
+        src={src}
+        alt={alt}
+        className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      />
     </div>
   );
 }
@@ -254,25 +351,46 @@ function MemoryPill({ memories }: { memories: Memory[] }) {
 
 interface StreamingBubbleProps {
   content: string;
+  attachments: MessageAttachment[];
+  toolStatus: string | null;
 }
 
-export function StreamingBubble({ content }: StreamingBubbleProps) {
+export function StreamingBubble({ content, attachments, toolStatus }: StreamingBubbleProps) {
+  const hasContent = content.length > 0;
   return (
     <div className="flex gap-4">
-      <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-surface-container-highest 
+      <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-surface-container-highest
                       flex items-center justify-center text-primary self-start mt-1">
         <Sparkles size={18} className="fill-primary animate-pulse" />
       </div>
       <div className="flex flex-col gap-2 max-w-[85%]">
-        <div className="bg-surface-container-high text-on-surface p-4 rounded-xl rounded-bl-sm">
-          <div className="markdown-content text-sm leading-relaxed font-body">
-            <ReactMarkdown components={markdownComponents}>
-              {content}
-            </ReactMarkdown>
-            <span className="inline-block w-0.5 h-4 bg-primary animate-pulse ml-0.5 rounded-full" />
+        {hasContent && (
+          <div className="bg-surface-container-high text-on-surface p-4 rounded-xl rounded-bl-sm">
+            <div className="markdown-content text-sm leading-relaxed font-body">
+              <ReactMarkdown components={markdownComponents}>
+                {content}
+              </ReactMarkdown>
+              <span className="inline-block w-0.5 h-4 bg-primary animate-pulse ml-0.5 rounded-full" />
+            </div>
           </div>
-        </div>
+        )}
+        {toolStatus === 'generate_image' && (
+          <ToolStatusPill label="Generating image…" />
+        )}
+        {attachments.length > 0 && (
+          <AttachmentGrid attachments={attachments} alignment="left" />
+        )}
       </div>
+    </div>
+  );
+}
+
+function ToolStatusPill({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-container-high
+                    text-on-surface-variant text-xs font-medium w-fit">
+      <Loader2 size={14} className="animate-spin text-primary" />
+      <span>{label}</span>
     </div>
   );
 }

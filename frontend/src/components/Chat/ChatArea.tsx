@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { Message } from '../../types';
+import type { Message, MessageAttachment } from '../../types';
 import { MessageBubble, StreamingBubble } from './MessageBubble';
 import { TypingIndicator } from './TypingIndicator';
 import { MessageSquare, Sparkles, Code, FileText } from 'lucide-react';
@@ -7,16 +7,18 @@ import { MessageSquare, Sparkles, Code, FileText } from 'lucide-react';
 interface ChatAreaProps {
   messages: Message[];
   streamingContent: string;
+  streamingAttachments: MessageAttachment[];
+  toolStatus: string | null;
   isStreaming: boolean;
   isLoading: boolean;
 }
 
-export function ChatArea({ messages, streamingContent, isStreaming, isLoading }: ChatAreaProps) {
+export function ChatArea({ messages, streamingContent, streamingAttachments, toolStatus, isStreaming, isLoading }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingContent]);
+  }, [messages, streamingContent, streamingAttachments, toolStatus]);
 
   if (isLoading) {
     return (
@@ -87,11 +89,15 @@ export function ChatArea({ messages, streamingContent, isStreaming, isLoading }:
           <MessageBubble key={message.id} message={message} />
         ))}
         
-        {isStreaming && streamingContent && (
-          <StreamingBubble content={streamingContent} />
+        {isStreaming && (streamingContent || streamingAttachments.length > 0 || toolStatus) && (
+          <StreamingBubble
+            content={streamingContent}
+            attachments={streamingAttachments}
+            toolStatus={toolStatus}
+          />
         )}
-        
-        {isStreaming && !streamingContent && (
+
+        {isStreaming && !streamingContent && streamingAttachments.length === 0 && !toolStatus && (
           <TypingIndicator />
         )}
         

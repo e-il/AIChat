@@ -5,6 +5,9 @@ public class ModelInfo
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string DeploymentName { get; set; } = "";
+    // "chat" (default) | "image". Image models are not selectable from the chat dropdown;
+    // they are invoked by the chat model via the generate_image tool.
+    public string Kind { get; set; } = "chat";
 }
 
 public class AzureOpenAISettings
@@ -21,4 +24,8 @@ public class AzureOpenAISettings
     // Deployment name for the embedding model (e.g. "text-embedding-3-small").
     // When empty, memory retrieval falls back to keyword overlap scoring.
     public string? EmbeddingDeploymentName { get; set; }
+    // Id (matches Models[].Id) of the image-generation deployment. Empty disables image generation.
+    public string? ImageGenerationModelId { get; set; }
+    // Master switch. When false, the generate_image tool is not exposed even if a model is configured.
+    public bool EnableImageGeneration { get; set; } = true;
 }

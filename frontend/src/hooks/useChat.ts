@@ -1,12 +1,21 @@
 import { useState, useRef, useCallback } from 'react';
 import * as signalR from '@microsoft/signalr';
-import type { Memory, Message } from '../types';
+import type { Memory, Message, MessageAttachment } from '../types';
 import { getAuthCode } from '../services/auth';
+
+export interface StreamCompletePayload {
+  conversationId: string;
+  content: string;
+  usedMemories: Memory[];
+  attachments: MessageAttachment[];
+}
 
 export function useChat() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
-  const onStreamCompleteRef = useRef<((conversationId: string, content: string, usedMemories: Memory[]) => void) | null>(null);
+  const [streamingAttachments, setStreamingAttachments] = useState<MessageAttachment[]>([]);
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const onStreamCompleteRef = useRef<((payload: StreamCompletePayload) => void) | null>(null);
   const onAuthErrorRef = useRef<(() => void) | null>(null);
 
   const sendMessage = useCallback(async (
@@ -26,8 +35,11 @@ export function useChat() {
 
     setIsStreaming(true);
     setStreamingContent('');
+    setStreamingAttachments([]);
+    setToolStatus(null);
     const accumulated: string[] = [];
     let usedMemories: Memory[] = [];
+    const attachments: MessageAttachment[] = [];
 
     const connection = new signalR.HubConnectionBuilder()
       .withUrl('/chathub', { accessTokenFactory: () => authCode })
@@ -42,10 +54,30 @@ export function useChat() {
       setStreamingContent(prev => prev + chunk);
     });
 
+    // The model invoked a tool — show "Generating image…" while we wait for the result.
+    connection.on('ToolCallStart', (_convId: string, toolName: string, _toolCallId: string) => {
+      setToolStatus(toolName);
+    });
+
+    // Tool produced an attachment (e.g. generated image). Surface it live so the
+    // user sees the picture appear before the wrap-up text streams in.
+    connection.on('AttachmentReady', (_convId: string, attachment: MessageAttachment, _toolCallId: string) => {
+      attachments.push(attachment);
+      setStreamingAttachments(prev => [...prev, attachment]);
+      setToolStatus(null);
+    });
+
     connection.on('StreamComplete', (convId: string) => {
       setIsStreaming(false);
       setStreamingContent('');
-      onStreamCompleteRef.current?.(convId, accumulated.join(''), usedMemories);
+      setStreamingAttachments([]);
+      setToolStatus(null);
+      onStreamCompleteRef.current?.({
+        conversationId: convId,
+        content: accumulated.join(''),
+        usedMemories,
+        attachments,
+      });
       connection.stop().catch(err => console.error('Error stopping connection:', err));
     });
 
@@ -53,6 +85,8 @@ export function useChat() {
       console.error('Chat error:', error);
       setIsStreaming(false);
       setStreamingContent('');
+      setStreamingAttachments([]);
+      setToolStatus(null);
       if (error.includes('authentication')) {
         onAuthErrorRef.current?.();
       }
@@ -70,11 +104,13 @@ export function useChat() {
       console.error('Failed to send message:', err);
       setIsStreaming(false);
       setStreamingContent('');
+      setStreamingAttachments([]);
+      setToolStatus(null);
       connection.stop().catch(e => console.error('Error stopping connection:', e));
     }
   }, []);
 
-  const setOnStreamComplete = useCallback((callback: (conversationId: string, content: string, usedMemories: Memory[]) => void) => {
+  const setOnStreamComplete = useCallback((callback: (payload: StreamCompletePayload) => void) => {
     onStreamCompleteRef.current = callback;
   }, []);
 
@@ -86,6 +122,8 @@ export function useChat() {
     sendMessage,
     isStreaming,
     streamingContent,
+    streamingAttachments,
+    toolStatus,
     setOnStreamComplete,
     setOnAuthError,
   };

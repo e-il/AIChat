@@ -95,9 +95,10 @@ public class ChatHub : Hub
         }
 
         var lastMessage = messages[^1];
-        if (lastMessage.Role != "user" || string.IsNullOrWhiteSpace(lastMessage.Content))
+        var hasAttachments = lastMessage.Attachments is { Count: > 0 };
+        if (lastMessage.Role != "user" || (string.IsNullOrWhiteSpace(lastMessage.Content) && !hasAttachments))
         {
-            await Clients.Caller.SendAsync("Error", conversationId, "Last message must be a non-empty user message");
+            await Clients.Caller.SendAsync("Error", conversationId, "Last message must be a user message with content or an attachment");
             return;
         }
 
@@ -115,9 +116,22 @@ public class ChatHub : Hub
                 await Clients.Caller.SendAsync("MemoryUsed", conversationId, memories);
             }
 
-            await foreach (var chunk in _openAIService.StreamChatCompletionAsync(messagesToSend, modelId, maxContextSize, maxMessages))
+            var allowImageGen = _configuration.GetValue("AzureOpenAI:EnableImageGeneration", true);
+            await foreach (var ev in _openAIService.StreamChatCompletionAsync(
+                userId, messagesToSend, modelId, maxContextSize, maxMessages, allowImageGen))
             {
-                await Clients.Caller.SendAsync("ReceiveMessageChunk", conversationId, chunk);
+                switch (ev)
+                {
+                    case TextDelta td:
+                        await Clients.Caller.SendAsync("ReceiveMessageChunk", conversationId, td.Text);
+                        break;
+                    case ToolCallStart tcs:
+                        await Clients.Caller.SendAsync("ToolCallStart", conversationId, tcs.ToolName, tcs.ToolCallId);
+                        break;
+                    case AttachmentReady ar:
+                        await Clients.Caller.SendAsync("AttachmentReady", conversationId, ar.Attachment, ar.ToolCallId);
+                        break;
+                }
             }
 
             if (memories.Count > 0)
@@ -162,6 +176,9 @@ public class ChatHub : Hub
         var checkpoint = await _checkpoint.GetAsync(userId, conversationId);
         var unextracted = GetUnextractedMessages(messages, checkpoint?.LastExtractedMessageId);
 
+        // Threshold gating still uses raw count (so users with image-heavy turns aren't
+        // permanently below threshold), but the extraction batch itself drops messages
+        // with attachments — we don't extract memory from picture-related conversations.
         if (unextracted.Count < threshold)
         {
             _logger.LogDebug("Extraction not triggered: {Count} unextracted < threshold {Threshold}",
@@ -169,12 +186,26 @@ public class ChatHub : Hub
             return;
         }
 
+        var textOnly = unextracted
+            .Where(m => m.Attachments is null || m.Attachments.Count == 0)
+            .ToList();
+
         var lastMessageId = unextracted[^1].Id;
+
+        if (textOnly.Count == 0)
+        {
+            _logger.LogInformation(
+                "Extraction skipped: all {Count} unextracted messages have image attachments. Advancing checkpoint to {LastId}.",
+                unextracted.Count, lastMessageId);
+            await _checkpoint.SetAsync(userId, conversationId, lastMessageId);
+            return;
+        }
+
         var enqueued = _extractionQueue.TryEnqueue(new ExtractionJob
         {
             UserId = userId,
             ConversationId = conversationId,
-            Messages = unextracted,
+            Messages = textOnly,
             LastMessageId = lastMessageId,
         });
 

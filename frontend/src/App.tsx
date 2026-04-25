@@ -11,7 +11,7 @@ import { useChat } from './hooks/useChat';
 import { chatApi } from './services/chatApi';
 import { hasAuthCode, setAuthCode, clearAuthCode } from './services/auth';
 import { getConversationSettings, saveConversationSettings, deleteConversationSettings } from './services/settings';
-import type { ModelInfo, Message, MemoryMode } from './types';
+import type { ModelInfo, Message, MemoryMode, MessageAttachment } from './types';
 import './index.css';
 
 function App() {
@@ -27,6 +27,7 @@ function App() {
   const [showAuthModal, setShowAuthModal] = useState(!hasAuthCode());
   const [isAuthenticated, setIsAuthenticated] = useState(hasAuthCode());
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
 
   const {
     conversations,
@@ -43,6 +44,8 @@ function App() {
     sendMessage,
     isStreaming,
     streamingContent,
+    streamingAttachments,
+    toolStatus,
     setOnStreamComplete,
     setOnAuthError,
   } = useChat();
@@ -110,13 +113,14 @@ function App() {
 
   // Wire up SignalR callbacks
   useEffect(() => {
-    setOnStreamComplete((conversationId, content, usedMemories) => {
+    setOnStreamComplete(({ conversationId, content, usedMemories, attachments }) => {
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
         content,
         timestamp: new Date().toISOString(),
         usedMemories: usedMemories.length > 0 ? usedMemories : undefined,
+        attachments: attachments.length > 0 ? attachments : undefined,
       };
       addMessage(conversationId, assistantMessage);
     });
@@ -166,6 +170,7 @@ function App() {
       role: 'user',
       content: message,
       timestamp: new Date().toISOString(),
+      attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
     };
 
     let conv = activeConversation;
@@ -178,6 +183,7 @@ function App() {
 
     const messagesForServer = [...conv.messages, userMessage];
     addMessage(conv.id, userMessage);
+    setPendingAttachments([]);
     sendMessage(conv.id, messagesForServer, selectedModel, currentContextSize, currentMaxMessages, memoryMode);
   };
 
@@ -279,6 +285,8 @@ function App() {
         <ChatArea
           messages={activeConversation?.messages || []}
           streamingContent={streamingContent}
+          streamingAttachments={streamingAttachments}
+          toolStatus={toolStatus}
           isStreaming={isStreaming}
           isLoading={isLoading}
         />
@@ -292,6 +300,9 @@ function App() {
           onModelChange={setSelectedModel}
           currentContextSize={currentContextSize}
           onContextSizeChange={handleContextSizeChange}
+          pendingAttachments={pendingAttachments}
+          onAttachmentsChange={setPendingAttachments}
+          onAuthError={handleAuthError}
         />
       </main>
     </div>

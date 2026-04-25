@@ -29,8 +29,13 @@ builder.Services.AddSignalR().AddJsonProtocol(options =>
         new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
 });
 
+// IHttpClientFactory — used by AzureOpenAIService to fetch image URLs as a defensive
+// fallback when a deployment ignores ResponseFormat=Bytes.
+builder.Services.AddHttpClient();
+
 // Register application services
 builder.Services.AddSingleton<IUserIdentityService, UserIdentityService>();
+builder.Services.AddSingleton<IImageStorageService, ImageStorageService>();
 builder.Services.AddSingleton<IAzureOpenAIService, AzureOpenAIService>();
 builder.Services.AddSingleton<IMemoryService, MemoryService>();
 builder.Services.AddSingleton<IExtractionCheckpointService, ExtractionCheckpointService>();
