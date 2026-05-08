@@ -21,9 +21,6 @@ public class AzureOpenAISettings
     public List<int> ContextSizeOptions { get; set; } = new();
     public int DefaultMaxMessages { get; set; } = 50;
     public List<int> MaxMessagesOptions { get; set; } = new();
-    // Deployment name for the embedding model (e.g. "text-embedding-3-small").
-    // When empty, memory retrieval falls back to keyword overlap scoring.
-    public string? EmbeddingDeploymentName { get; set; }
     // Id (matches Models[].Id) of the image-generation deployment. Empty disables image generation.
     public string? ImageGenerationModelId { get; set; }
     // Master switch. When false, the generate_image tool is not exposed even if a model is configured.

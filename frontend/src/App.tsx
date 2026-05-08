@@ -28,6 +28,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
+  const [defaultModel, setDefaultModel] = useState<string>('');
   const [defaultContextSize, setDefaultContextSize] = useState(100000);
   const [currentContextSize, setCurrentContextSize] = useState(100000);
   const [maxMessagesOptions, setMaxMessagesOptions] = useState<number[]>([]);
@@ -89,6 +90,7 @@ function App() {
 
     chatApi.getModels().then(response => {
       setModels(response.models);
+      setDefaultModel(response.defaultModel);
       setSelectedModel(response.defaultModel);
       setDefaultContextSize(response.defaultContextSize);
       setCurrentContextSize(response.defaultContextSize);
@@ -137,10 +139,14 @@ function App() {
       setCurrentContextSize(defaultContextSize);
       setCurrentMaxMessages(defaultMaxMessages);
       setMemoryMode('auto');
+      setSelectedPromptProfileId(DEFAULT_PROMPT_PROFILE_ID);
+      if (defaultModel) {
+        setSelectedModel(defaultModel);
+      }
     }
     // Track conversation identity only; message updates should not reset chat controls.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConversation?.id, defaultContextSize, defaultMaxMessages, promptProfiles]);
+  }, [activeConversation?.id, defaultContextSize, defaultMaxMessages, defaultModel]);
 
   // Update document title based on active conversation
   useEffect(() => {
@@ -185,15 +191,22 @@ function App() {
     });
   }, [activeConversation, currentContextSize, currentMaxMessages, memoryMode, selectedPromptProfileId]);
 
-  const handleNewChat = async (profileId = selectedPromptProfileId) => {
+  const handleNewChat = async (profileId = DEFAULT_PROMPT_PROFILE_ID) => {
     const profile = getPromptProfileById(promptProfiles, profileId);
+    const model = defaultModel || selectedModel;
+    if (model) {
+      setSelectedModel(model);
+    }
     setSelectedPromptProfileId(profile.id);
+    setCurrentContextSize(defaultContextSize);
+    setCurrentMaxMessages(defaultMaxMessages);
+    setMemoryMode('auto');
     const newConversation = await createConversation();
     if (newConversation) {
       saveConversationSettings(newConversation.id, {
-        maxContextSize: currentContextSize,
-        maxMessages: currentMaxMessages,
-        memoryMode,
+        maxContextSize: defaultContextSize,
+        maxMessages: defaultMaxMessages,
+        memoryMode: 'auto',
         promptProfileId: profile.id,
       });
     }

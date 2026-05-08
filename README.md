@@ -41,24 +41,18 @@ AIChat/
 
 ### Backend Configuration
 
-Edit `backend/AIChat.Api/appsettings.json`:
+Copy `backend/AIChat.Api/config/azure-openai.example.json` to `backend/AIChat.Api/config/azure-openai.json` and fill in your Azure OpenAI credentials:
 
 ```json
 {
   "AzureOpenAI": {
     "Endpoint": "https://YOUR-RESOURCE.openai.azure.com/",
-    "ApiKey": "YOUR-API-KEY",
-    "Models": [
-      { "Id": "gpt-4o", "Name": "GPT-4o", "DeploymentName": "gpt-4o" },
-      { "Id": "gpt-4o-mini", "Name": "GPT-4o Mini", "DeploymentName": "gpt-4o-mini" },
-      { "Id": "gpt-4", "Name": "GPT-4", "DeploymentName": "gpt-4" }
-    ],
-    "DefaultModel": "gpt-4o"
+    "ApiKey": "YOUR-API-KEY"
   }
 }
 ```
 
-**Note:** Add your deployed model names to the `Models` array. The `DeploymentName` should match your Azure OpenAI deployment name.
+**Note:** Add your deployed model names to `backend/AIChat.Api/config/models.json`. The `DeploymentName` should match your Azure OpenAI deployment name.
 
 ## Getting Started
 

@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 using Serilog;
+using AIChat.Api.Extensions;
 using AIChat.Api.Hubs;
-using AIChat.Api.Models;
 using AIChat.Api.Services;
 using AIChat.Api.Middleware;
 
@@ -10,7 +10,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Additional config files. Env vars are re-registered after so they continue to win.
 builder.Configuration
     .AddJsonFile("config/users.json", optional: false, reloadOnChange: true)
+    .AddJsonFile("config/azure-openai.json", optional: true, reloadOnChange: true)
     .AddJsonFile("config/models.json", optional: false, reloadOnChange: true)
+    .AddJsonFile("config/memory.json", optional: false, reloadOnChange: true)
     .AddJsonFile("config/prompt-profiles.json", optional: false, reloadOnChange: true)
     .AddEnvironmentVariables();
 
@@ -31,27 +33,11 @@ builder.Services.AddSignalR().AddJsonProtocol(options =>
         new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
 });
 
-// IHttpClientFactory — used by AzureOpenAIService to fetch image URLs as a defensive
-// fallback when a deployment ignores ResponseFormat=Bytes.
-builder.Services.AddHttpClient();
-builder.Services.Configure<PromptProfileSettings>(builder.Configuration.GetSection("PromptProfiles"));
-
 // Register application services
 builder.Services.AddSingleton<IUserIdentityService, UserIdentityService>();
-builder.Services.AddSingleton<IImageStorageService, ImageStorageService>();
-builder.Services.AddSingleton<IAzureOpenAIService, AzureOpenAIService>();
-builder.Services.AddSingleton<MemoryRetrievalMetrics>();
-builder.Services.AddSingleton<IMemoryRetrievalMetrics>(sp => sp.GetRequiredService<MemoryRetrievalMetrics>());
-builder.Services.AddSingleton<IPromptProfileRegistry, PromptProfileRegistry>();
-builder.Services.AddSingleton<IMemoryService, MemoryService>();
-builder.Services.AddSingleton<IExtractionCheckpointService, ExtractionCheckpointService>();
-// ExtractionQueue has two surfaces pointing at the same singleton: IExtractionQueue
-// (enqueue-only, injected into ChatHub) and the concrete type (full access to
-// internal Reader/Release, injected into ExtractionWorker).
-builder.Services.AddSingleton<ExtractionQueue>();
-builder.Services.AddSingleton<IExtractionQueue>(sp => sp.GetRequiredService<ExtractionQueue>());
-builder.Services.AddHostedService<MemoryMetricsLogListener>();
-builder.Services.AddHostedService<ExtractionWorker>();
+builder.Services.AddAzureOpenAI(builder.Configuration);
+builder.Services.AddPromptProfiles(builder.Configuration);
+builder.Services.AddMemoryServices(builder.Configuration);
 
 // Configure CORS
 builder.Services.AddCors(options =>

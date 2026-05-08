@@ -1,0 +1,6 @@
+{
+  "Memory": {
+    "ExtractionThreshold": 10,
+    "EmbeddingDeploymentName": "text-embedding-3-small"
+  }
+}

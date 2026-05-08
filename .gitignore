@@ -425,5 +425,8 @@ FodyWeavers.xsd
 backend/AIChat.Api/data/
 backend/AIChat.Api/Data/
 
+# Local Azure OpenAI credentials
+backend/AIChat.Api/config/azure-openai.json
+
 # Serilog rolling log files
 backend/AIChat.Api/logs/

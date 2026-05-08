@@ -3,15 +3,13 @@
     "Models": [
       { "Id": "gpt-4o", "Name": "GPT-4o", "DeploymentName": "gpt-4o", "Kind": "chat" },
       { "Id": "gpt-5.4", "Name": "GPT-5.4", "DeploymentName": "gpt-5.4", "Kind": "chat" },
-      { "Id": "gpt-image-2", "Name": "GPT Image 2", "DeploymentName": "gpt-image-2", "Kind": "image" },
-      { "Id": "text-embedding-3-small", "Name": "Text Embedding 3 Small", "DeploymentName": "text-embedding-3-small", "Kind": "embedding" }
+      { "Id": "gpt-image-2", "Name": "GPT Image 2", "DeploymentName": "gpt-image-2", "Kind": "image" }
     ],
     "DefaultModel": "gpt-4o",
     "DefaultContextSize": 100000,
     "ContextSizeOptions": [20000, 50000, 100000, 200000],
     "DefaultMaxMessages": 50,
     "MaxMessagesOptions": [10, 20, 50, 100, 200],
-    "EmbeddingDeploymentName": "text-embedding-3-small",
     "ImageGenerationModelId": "gpt-image-2",
     "EnableImageGeneration": true
   }

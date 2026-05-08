@@ -8,6 +8,7 @@ using Azure.AI.OpenAI;
 using OpenAI.Chat;
 using OpenAI.Embeddings;
 using OpenAI.Images;
+using Microsoft.Extensions.Options;
 using AIChat.Api.Models;
 using AppChatMessage = AIChat.Api.Models.ChatMessage;
 
@@ -23,12 +24,14 @@ public class AzureOpenAIService : IAzureOpenAIService
     private readonly Lazy<EmbeddingClient?> _embeddingClient;
     private readonly Lazy<ImageClient?> _imageClient;
     private readonly AzureOpenAISettings _settings;
+    private readonly MemorySettings _memorySettings;
     private readonly IImageStorageService _imageStorage;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AzureOpenAIService> _logger;
 
     public AzureOpenAIService(
-        IConfiguration configuration,
+        IOptions<AzureOpenAISettings> settings,
+        IOptions<MemorySettings> memorySettings,
         IImageStorageService imageStorage,
         IHttpClientFactory httpClientFactory,
         ILogger<AzureOpenAIService> logger)
@@ -36,27 +39,20 @@ public class AzureOpenAIService : IAzureOpenAIService
         _logger = logger;
         _imageStorage = imageStorage;
         _httpClientFactory = httpClientFactory;
-        _settings = configuration.GetSection("AzureOpenAI").Get<AzureOpenAISettings>()
-            ?? throw new InvalidOperationException("AzureOpenAI settings are not configured");
-
-        // Override with environment variables if set
-        var envEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT");
-        var envApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY");
-
-        if (!string.IsNullOrEmpty(envEndpoint)) _settings.Endpoint = envEndpoint;
-        if (!string.IsNullOrEmpty(envApiKey)) _settings.ApiKey = envApiKey;
+        _settings = settings.Value;
+        _memorySettings = memorySettings.Value;
 
         if (string.IsNullOrEmpty(_settings.Endpoint) || string.IsNullOrEmpty(_settings.ApiKey))
         {
-            throw new InvalidOperationException("AzureOpenAI:Endpoint and ApiKey must be configured (via appsettings.json or environment variables)");
+            throw new InvalidOperationException("AzureOpenAI:Endpoint and ApiKey must be configured (via config/azure-openai.json or environment variables)");
         }
 
         _client = new AzureOpenAIClient(new Uri(_settings.Endpoint), new ApiKeyCredential(_settings.ApiKey));
 
         _embeddingClient = new Lazy<EmbeddingClient?>(() =>
-            string.IsNullOrWhiteSpace(_settings.EmbeddingDeploymentName)
+            string.IsNullOrWhiteSpace(_memorySettings.EmbeddingDeploymentName)
                 ? null
-                : _client.GetEmbeddingClient(_settings.EmbeddingDeploymentName));
+                : _client.GetEmbeddingClient(_memorySettings.EmbeddingDeploymentName));
 
         _imageClient = new Lazy<ImageClient?>(() =>
         {

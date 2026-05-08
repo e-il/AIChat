@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Options;
 using AIChat.Api.Models;
 using AIChat.Api.Services;
 
@@ -15,7 +16,8 @@ public class ChatHub : Hub
     private readonly IExtractionCheckpointService _checkpoint;
     private readonly IExtractionQueue _extractionQueue;
     private readonly IPromptProfileRegistry _promptProfiles;
-    private readonly IConfiguration _configuration;
+    private readonly MemorySettings _memorySettings;
+    private readonly AzureOpenAISettings _azureOpenAISettings;
     private readonly ILogger<ChatHub> _logger;
 
     public ChatHub(
@@ -25,7 +27,8 @@ public class ChatHub : Hub
         IExtractionCheckpointService checkpoint,
         IExtractionQueue extractionQueue,
         IPromptProfileRegistry promptProfiles,
-        IConfiguration configuration,
+        IOptions<MemorySettings> memorySettings,
+        IOptions<AzureOpenAISettings> azureOpenAISettings,
         ILogger<ChatHub> logger)
     {
         _openAIService = openAIService;
@@ -34,7 +37,8 @@ public class ChatHub : Hub
         _checkpoint = checkpoint;
         _extractionQueue = extractionQueue;
         _promptProfiles = promptProfiles;
-        _configuration = configuration;
+        _memorySettings = memorySettings.Value;
+        _azureOpenAISettings = azureOpenAISettings.Value;
         _logger = logger;
     }
 
@@ -140,7 +144,7 @@ public class ChatHub : Hub
                 }
             }
 
-            var allowImageGen = _configuration.GetValue("AzureOpenAI:EnableImageGeneration", true);
+            var allowImageGen = _azureOpenAISettings.EnableImageGeneration;
             await foreach (var ev in _openAIService.StreamChatCompletionAsync(
                 userId, messagesToSend, modelId, maxContextSize, maxMessages, allowImageGen))
             {
@@ -195,7 +199,7 @@ public class ChatHub : Hub
 
     private async Task TryTriggerExtractionAsync(string userId, string conversationId, List<ChatMessage> messages)
     {
-        var threshold = _configuration.GetValue<int>("Memory:ExtractionThreshold", 10);
+        var threshold = _memorySettings.ExtractionThreshold;
 
         var checkpoint = await _checkpoint.GetAsync(userId, conversationId);
         var unextracted = GetUnextractedMessages(messages, checkpoint?.LastExtractedMessageId);

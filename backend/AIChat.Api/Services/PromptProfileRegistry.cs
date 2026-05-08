@@ -24,16 +24,16 @@ public class PromptProfileRegistry : IPromptProfileRegistry
     private const string DefaultGeneralSystemPrompt =
         "You are a helpful AI assistant. Be concise and helpful in your responses.";
 
-    private readonly IOptionsMonitor<PromptProfileSettings> _settings;
+    private readonly PromptProfileSettings _settings;
 
-    public PromptProfileRegistry(IOptionsMonitor<PromptProfileSettings> settings)
+    public PromptProfileRegistry(IOptions<PromptProfileSettings> settings)
     {
-        _settings = settings;
+        _settings = settings.Value;
     }
 
     public int MaxCustomSystemPromptLength =>
-        _settings.CurrentValue.MaxCustomSystemPromptLength > 0
-            ? _settings.CurrentValue.MaxCustomSystemPromptLength
+        CurrentSettings.MaxCustomSystemPromptLength > 0
+            ? CurrentSettings.MaxCustomSystemPromptLength
             : DefaultMaxCustomSystemPromptLength;
 
     public string GeneralSystemPrompt =>
@@ -87,12 +87,15 @@ public class PromptProfileRegistry : IPromptProfileRegistry
 
     private List<PromptProfile> GetProfiles()
     {
-        return _settings.CurrentValue.Profiles
+        return CurrentSettings.Profiles
             .Where(p => !string.IsNullOrWhiteSpace(p.Id) && !string.IsNullOrWhiteSpace(p.SystemPrompt))
             .GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
             .Select(g => NormalizeBuiltIn(g.First()))
             .ToList();
     }
+
+    private PromptProfileSettings CurrentSettings =>
+        _settings;
 
     private static PromptProfile NormalizeBuiltIn(PromptProfile profile)
     {
