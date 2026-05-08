@@ -1,17 +1,27 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Menu, History, Brain, BrainCircuit } from 'lucide-react';
+import { Menu, History, Brain, BrainCircuit, Settings } from 'lucide-react';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatArea } from './components/Chat/ChatArea';
 import { ChatInput } from './components/Input/ChatInput';
 import { AuthCodeModal } from './components/Auth/AuthCodeModal';
 import { MemoryPanel } from './components/Memory/MemoryPanel';
+import { PromptProfilesPanel } from './components/PromptProfiles/PromptProfilesPanel';
 import { Dropdown } from './components/Common/Dropdown';
 import { useConversations } from './hooks/useConversations';
 import { useChat } from './hooks/useChat';
 import { chatApi } from './services/chatApi';
 import { hasAuthCode, setAuthCode, clearAuthCode } from './services/auth';
 import { getConversationSettings, saveConversationSettings, deleteConversationSettings } from './services/settings';
-import type { ModelInfo, Message, MemoryMode, MessageAttachment } from './types';
+import {
+  DEFAULT_PROMPT_PROFILE_ID,
+  FALLBACK_BUILT_IN_PROMPT_PROFILES,
+  FALLBACK_MAX_CUSTOM_SYSTEM_PROMPT_LENGTH,
+  getPromptProfileById,
+  loadCustomPromptProfiles,
+  mergePromptProfiles,
+  saveCustomPromptProfiles,
+} from './services/promptProfiles';
+import type { ModelInfo, Message, MemoryMode, MessageAttachment, PromptProfile } from './types';
 import './index.css';
 
 function App() {
@@ -27,7 +37,12 @@ function App() {
   const [showAuthModal, setShowAuthModal] = useState(!hasAuthCode());
   const [isAuthenticated, setIsAuthenticated] = useState(hasAuthCode());
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [promptProfilesOpen, setPromptProfilesOpen] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
+  const [builtInPromptProfiles, setBuiltInPromptProfiles] = useState<PromptProfile[]>(FALLBACK_BUILT_IN_PROMPT_PROFILES);
+  const [customPromptProfiles, setCustomPromptProfiles] = useState<PromptProfile[]>(() => loadCustomPromptProfiles());
+  const [selectedPromptProfileId, setSelectedPromptProfileId] = useState(DEFAULT_PROMPT_PROFILE_ID);
+  const [maxCustomSystemPromptLength, setMaxCustomSystemPromptLength] = useState(FALLBACK_MAX_CUSTOM_SYSTEM_PROMPT_LENGTH);
 
   const {
     conversations,
@@ -87,8 +102,28 @@ function App() {
       }
     });
 
+    chatApi.getPromptProfiles().then(response => {
+      setBuiltInPromptProfiles(response.profiles);
+      setMaxCustomSystemPromptLength(response.maxCustomSystemPromptLength);
+    }).catch(err => {
+      console.error('Failed to load prompt profiles:', err);
+      if (err.message === 'AUTH_REQUIRED') {
+        handleAuthError();
+      }
+    });
+
     loadConversations();
   }, [isAuthenticated, handleAuthError, loadConversations]);
+
+  const promptProfiles = useMemo(
+    () => mergePromptProfiles(builtInPromptProfiles, customPromptProfiles),
+    [builtInPromptProfiles, customPromptProfiles]
+  );
+
+  const selectedPromptProfile = useMemo(
+    () => getPromptProfileById(promptProfiles, selectedPromptProfileId),
+    [promptProfiles, selectedPromptProfileId]
+  );
 
   // Load conversation settings when active conversation changes
   useEffect(() => {
@@ -97,12 +132,15 @@ function App() {
       setCurrentContextSize(settings.maxContextSize);
       setCurrentMaxMessages(settings.maxMessages);
       setMemoryMode(settings.memoryMode ?? 'auto');
+      setSelectedPromptProfileId(getPromptProfileById(promptProfiles, settings.promptProfileId).id);
     } else {
       setCurrentContextSize(defaultContextSize);
       setCurrentMaxMessages(defaultMaxMessages);
       setMemoryMode('auto');
     }
-  }, [activeConversation?.id, defaultContextSize, defaultMaxMessages]);
+    // Track conversation identity only; message updates should not reset chat controls.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversation?.id, defaultContextSize, defaultMaxMessages, promptProfiles]);
 
   // Update document title based on active conversation
   useEffect(() => {
@@ -132,8 +170,33 @@ function App() {
     setSidebarOpen(false);
   };
 
-  const handleNewChat = async () => {
-    await createConversation();
+  const saveActiveConversationSettings = useCallback((settings: Partial<{
+    maxContextSize: number;
+    maxMessages: number;
+    memoryMode: MemoryMode;
+    promptProfileId: string;
+  }>) => {
+    if (!activeConversation) return;
+    saveConversationSettings(activeConversation.id, {
+      maxContextSize: settings.maxContextSize ?? currentContextSize,
+      maxMessages: settings.maxMessages ?? currentMaxMessages,
+      memoryMode: settings.memoryMode ?? memoryMode,
+      promptProfileId: settings.promptProfileId ?? selectedPromptProfileId,
+    });
+  }, [activeConversation, currentContextSize, currentMaxMessages, memoryMode, selectedPromptProfileId]);
+
+  const handleNewChat = async (profileId = selectedPromptProfileId) => {
+    const profile = getPromptProfileById(promptProfiles, profileId);
+    setSelectedPromptProfileId(profile.id);
+    const newConversation = await createConversation();
+    if (newConversation) {
+      saveConversationSettings(newConversation.id, {
+        maxContextSize: currentContextSize,
+        maxMessages: currentMaxMessages,
+        memoryMode,
+        promptProfileId: profile.id,
+      });
+    }
     setSidebarOpen(false);
   };
 
@@ -144,23 +207,44 @@ function App() {
 
   const handleContextSizeChange = (size: number) => {
     setCurrentContextSize(size);
-    if (activeConversation) {
-      saveConversationSettings(activeConversation.id, { maxContextSize: size, maxMessages: currentMaxMessages, memoryMode });
-    }
+    saveActiveConversationSettings({ maxContextSize: size });
   };
 
   const handleMaxMessagesChange = (count: number) => {
     setCurrentMaxMessages(count);
-    if (activeConversation) {
-      saveConversationSettings(activeConversation.id, { maxContextSize: currentContextSize, maxMessages: count, memoryMode });
-    }
+    saveActiveConversationSettings({ maxMessages: count });
   };
 
   const handleMemoryModeToggle = () => {
     const next: MemoryMode = memoryMode === 'off' ? 'auto' : 'off';
     setMemoryMode(next);
-    if (activeConversation) {
-      saveConversationSettings(activeConversation.id, { maxContextSize: currentContextSize, maxMessages: currentMaxMessages, memoryMode: next });
+    saveActiveConversationSettings({ memoryMode: next });
+  };
+
+  const handlePromptProfileChange = (profileId: string) => {
+    const profile = getPromptProfileById(promptProfiles, profileId);
+    setSelectedPromptProfileId(profile.id);
+    saveActiveConversationSettings({ promptProfileId: profile.id });
+  };
+
+  const handleSaveCustomPromptProfile = (profile: PromptProfile) => {
+    const nextProfiles = [
+      ...customPromptProfiles.filter(p => p.id !== profile.id),
+      { ...profile, isBuiltIn: false },
+    ];
+    setCustomPromptProfiles(nextProfiles);
+    saveCustomPromptProfiles(nextProfiles);
+    setSelectedPromptProfileId(profile.id);
+    saveActiveConversationSettings({ promptProfileId: profile.id });
+  };
+
+  const handleDeleteCustomPromptProfile = (profileId: string) => {
+    const nextProfiles = customPromptProfiles.filter(p => p.id !== profileId);
+    setCustomPromptProfiles(nextProfiles);
+    saveCustomPromptProfiles(nextProfiles);
+    if (selectedPromptProfileId === profileId) {
+      setSelectedPromptProfileId(DEFAULT_PROMPT_PROFILE_ID);
+      saveActiveConversationSettings({ promptProfileId: DEFAULT_PROMPT_PROFILE_ID });
     }
   };
 
@@ -178,13 +262,28 @@ function App() {
       const newConv = await createConversation();
       if (!newConv) return;
       conv = newConv;
-      saveConversationSettings(newConv.id, { maxContextSize: currentContextSize, maxMessages: currentMaxMessages, memoryMode });
+      saveConversationSettings(newConv.id, {
+        maxContextSize: currentContextSize,
+        maxMessages: currentMaxMessages,
+        memoryMode,
+        promptProfileId: selectedPromptProfile.id,
+      });
     }
 
     const messagesForServer = [...conv.messages, userMessage];
     addMessage(conv.id, userMessage);
     setPendingAttachments([]);
-    sendMessage(conv.id, messagesForServer, selectedModel, currentContextSize, currentMaxMessages, memoryMode);
+    sendMessage(
+      conv.id,
+      messagesForServer,
+      selectedModel,
+      currentContextSize,
+      currentMaxMessages,
+      memoryMode,
+      null,
+      selectedPromptProfile.id,
+      selectedPromptProfile.isBuiltIn ? null : selectedPromptProfile.systemPrompt
+    );
   };
 
   // Memoize dropdown options
@@ -196,6 +295,11 @@ function App() {
   const maxMessagesDropdownOptions = useMemo(() =>
     maxMessagesOptions.map(c => ({ value: c, label: `${c} msgs` })),
     [maxMessagesOptions]
+  );
+
+  const promptProfileOptions = useMemo(() =>
+    promptProfiles.map(profile => ({ value: profile.id, label: profile.name })),
+    [promptProfiles]
   );
 
   // Get selected model name for header badge
@@ -212,7 +316,8 @@ function App() {
         conversations={conversations}
         activeId={activeConversation?.id || null}
         onSelect={handleSelectConversation}
-        onNew={handleNewChat}
+        onNew={() => handleNewChat()}
+        onNewWithProfile={handleNewChat}
         onDelete={handleDeleteConversation}
         onOpenMemory={() => setMemoryOpen(true)}
         isOpen={sidebarOpen}
@@ -220,6 +325,16 @@ function App() {
       />
 
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+      <PromptProfilesPanel
+        open={promptProfilesOpen}
+        profiles={promptProfiles}
+        selectedProfileId={selectedPromptProfile.id}
+        maxCustomSystemPromptLength={maxCustomSystemPromptLength}
+        onClose={() => setPromptProfilesOpen(false)}
+        onSelectProfile={handlePromptProfileChange}
+        onSaveCustomProfile={handleSaveCustomPromptProfile}
+        onDeleteCustomProfile={handleDeleteCustomPromptProfile}
+      />
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 relative">
@@ -254,6 +369,27 @@ function App() {
           </div>
 
           <div className="flex items-center gap-2">
+            <div className="hidden md:block">
+              <Dropdown
+                options={promptProfileOptions}
+                value={selectedPromptProfile.id}
+                onChange={handlePromptProfileChange}
+                disabled={isStreaming}
+                title="System Prompt Profile"
+              />
+            </div>
+
+            <button
+              onClick={() => setPromptProfilesOpen(true)}
+              disabled={isStreaming}
+              title="Prompt profiles"
+              className="w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant
+                         hover:bg-surface-container hover:text-primary transition-colors cursor-pointer
+                         disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Settings size={18} />
+            </button>
+
             {/* Memory mode toggle */}
             <button
               onClick={handleMemoryModeToggle}
@@ -303,6 +439,7 @@ function App() {
           pendingAttachments={pendingAttachments}
           onAttachmentsChange={setPendingAttachments}
           onAuthError={handleAuthError}
+          placeholder={selectedPromptProfile.inputPlaceholder}
         />
       </main>
     </div>

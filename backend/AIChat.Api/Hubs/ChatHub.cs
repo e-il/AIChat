@@ -14,6 +14,7 @@ public class ChatHub : Hub
     private readonly IMemoryService _memory;
     private readonly IExtractionCheckpointService _checkpoint;
     private readonly IExtractionQueue _extractionQueue;
+    private readonly IPromptProfileRegistry _promptProfiles;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ChatHub> _logger;
 
@@ -23,6 +24,7 @@ public class ChatHub : Hub
         IMemoryService memory,
         IExtractionCheckpointService checkpoint,
         IExtractionQueue extractionQueue,
+        IPromptProfileRegistry promptProfiles,
         IConfiguration configuration,
         ILogger<ChatHub> logger)
     {
@@ -31,6 +33,7 @@ public class ChatHub : Hub
         _memory = memory;
         _checkpoint = checkpoint;
         _extractionQueue = extractionQueue;
+        _promptProfiles = promptProfiles;
         _configuration = configuration;
         _logger = logger;
     }
@@ -67,15 +70,22 @@ public class ChatHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task SendMessage(
-        string conversationId,
-        List<ChatMessage> messages,
-        string modelId,
-        int maxContextSize = 100000,
-        int maxMessages = 50,
-        string memoryMode = "auto",
-        List<string>? explicitMemoryIds = null)
+    public async Task SendMessage(SendMessageRequest? request)
     {
+        if (request is null)
+        {
+            await Clients.Caller.SendAsync("Error", "", "Request cannot be empty");
+            return;
+        }
+
+        var conversationId = request.ConversationId;
+        var messages = request.Messages;
+        var modelId = request.ModelId;
+        var maxContextSize = request.MaxContextSize;
+        var maxMessages = request.MaxMessages;
+        var memoryMode = request.MemoryMode;
+        var explicitMemoryIds = request.ExplicitMemoryIds;
+
         var userId = GetUserId();
         if (userId is null)
         {
@@ -85,8 +95,8 @@ public class ChatHub : Hub
             return;
         }
 
-        _logger.LogInformation("SendMessage: user={UserId}, conversationId={ConversationId}, message count={Count}, modelId={ModelId}, memoryMode={MemoryMode}",
-            userId, conversationId, messages?.Count ?? 0, modelId, memoryMode);
+        _logger.LogInformation("SendMessage: user={UserId}, conversationId={ConversationId}, message count={Count}, modelId={ModelId}, memoryMode={MemoryMode}, promptProfileId={PromptProfileId}",
+            userId, conversationId, messages?.Count ?? 0, modelId, memoryMode, request.PromptProfileId);
 
         if (messages is null || messages.Count == 0)
         {
@@ -104,16 +114,30 @@ public class ChatHub : Hub
 
         try
         {
+            if (!_promptProfiles.TryResolveSystemPrompt(
+                    request.PromptProfileId,
+                    request.CustomSystemPrompt,
+                    out var selectedSystemPrompt,
+                    out var isDefaultGeneralPrompt,
+                    out var promptError))
+            {
+                await Clients.Caller.SendAsync("Error", conversationId, promptError);
+                return;
+            }
+
             // Resolve memory based on mode and inject into system prompt
             var memories = await ResolveMemoriesAsync(userId, lastMessage.Content, memoryMode, explicitMemoryIds);
             var messagesToSend = messages;
-            if (memories.Count > 0)
+            if (memories.Count > 0 || !isDefaultGeneralPrompt)
             {
-                var systemPrompt = BuildSystemPrompt(memories);
+                var systemPrompt = BuildSystemPrompt(selectedSystemPrompt, memories, _promptProfiles.GeneralSystemPrompt);
                 messagesToSend = PrependSystemMessage(messages, systemPrompt);
-                _logger.LogInformation("Injected {Count} memories into system prompt", memories.Count);
-                // Send full Memory objects so the client can surface content in the UI.
-                await Clients.Caller.SendAsync("MemoryUsed", conversationId, memories);
+                if (memories.Count > 0)
+                {
+                    _logger.LogInformation("Injected {Count} memories into system prompt", memories.Count);
+                    // Send full Memory objects so the client can surface content in the UI.
+                    await Clients.Caller.SendAsync("MemoryUsed", conversationId, memories);
+                }
             }
 
             var allowImageGen = _configuration.GetValue("AzureOpenAI:EnableImageGeneration", true);
@@ -231,10 +255,12 @@ public class ChatHub : Hub
         return messages.Skip(idx + 1).ToList();
     }
 
-    private static string BuildSystemPrompt(List<Memory> memories)
+    private static string BuildSystemPrompt(string baseSystemPrompt, List<Memory> memories, string fallbackSystemPrompt)
     {
         var sb = new StringBuilder();
-        sb.Append("You are a helpful AI assistant. Be concise and helpful in your responses.");
+        sb.Append(string.IsNullOrWhiteSpace(baseSystemPrompt)
+            ? fallbackSystemPrompt
+            : baseSystemPrompt.Trim());
 
         if (memories.Count > 0)
         {

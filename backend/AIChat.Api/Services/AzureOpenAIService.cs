@@ -16,6 +16,7 @@ namespace AIChat.Api.Services;
 public class AzureOpenAIService : IAzureOpenAIService
 {
     private const string ImageFetchHttpClient = "azure-openai-image-fetch";
+    private const int MaxExtractionExistingMemoryChars = 4000;
 
     private readonly AzureOpenAIClient _client;
     private readonly ConcurrentDictionary<string, ChatClient> _chatClients = new();
@@ -485,10 +486,11 @@ public class AzureOpenAIService : IAzureOpenAIService
 
     public async Task<List<ExtractedMemory>> ExtractMemoriesAsync(
         List<AppChatMessage> messages,
+        List<Memory> existingMemories,
         CancellationToken cancellationToken = default)
     {
         var chatClient = GetChatClient(_settings.DefaultModel);
-        var promptMessages = BuildExtractionPrompt(messages);
+        var promptMessages = BuildExtractionPrompt(messages, existingMemories);
 
         var options = new ChatCompletionOptions
         {
@@ -639,7 +641,9 @@ public class AzureOpenAIService : IAzureOpenAIService
         public List<ExtractedMemory> Memories { get; set; } = new();
     }
 
-    private static List<OpenAI.Chat.ChatMessage> BuildExtractionPrompt(List<AppChatMessage> messages)
+    private static List<OpenAI.Chat.ChatMessage> BuildExtractionPrompt(
+        List<AppChatMessage> messages,
+        List<Memory> existingMemories)
     {
         var transcript = new StringBuilder();
         foreach (var msg in messages)
@@ -656,13 +660,15 @@ public class AzureOpenAIService : IAzureOpenAIService
             transcript.AppendLine();
         }
 
+        var existingMemoryBlock = BuildExistingMemoryBlock(existingMemories);
+
         var system = """
 You analyze chat transcripts and extract durable user information worth remembering across future conversations.
 
 Output a JSON object with this exact shape:
 {
   "memories": [
-    { "type": "fact" | "preference" | "summary", "content": "<= 300 chars" }
+    { "type": "fact" | "preference" | "summary", "content": "<= 300 chars", "existingMemoryId": "<id to update, or null for new memory>" }
   ]
 }
 
@@ -677,6 +683,11 @@ Do NOT extract:
 - Passwords, API keys, tokens, sensitive credentials
 - Temporary context (weather, file paths, session-specific details)
 
+Use existing memories only to prevent duplicates and identify real updates:
+- Do not output a memory if it already exists with the same meaning.
+- If the transcript corrects or materially refines an existing memory, return the updated content and set existingMemoryId to that memory's id.
+- For brand-new memories, set existingMemoryId to null or omit it.
+
 If nothing is worth remembering, return {"memories": []}. Empty is a valid, correct answer.
 Return ONLY the JSON object, no commentary or code fences.
 """;
@@ -684,8 +695,33 @@ Return ONLY the JSON object, no commentary or code fences.
         return new List<OpenAI.Chat.ChatMessage>
         {
             new SystemChatMessage(system),
-            new UserChatMessage("Transcript:\n\n" + transcript.ToString()),
+            new UserChatMessage(existingMemoryBlock + "\n\nTranscript:\n\n" + transcript.ToString()),
         };
+    }
+
+    private static string BuildExistingMemoryBlock(List<Memory> existingMemories)
+    {
+        if (existingMemories.Count == 0)
+        {
+            return "Existing memories already saved:\nNone.";
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Existing memories already saved:");
+
+        var usedChars = 0;
+        foreach (var memory in existingMemories
+            .OrderByDescending(m => m.Type == MemoryType.Preference)
+            .ThenByDescending(m => m.LastUsedAt)
+            .ThenByDescending(m => m.CreatedAt))
+        {
+            var line = $"- [{memory.Id}] {memory.Type}: {memory.Content}";
+            if (usedChars + line.Length > MaxExtractionExistingMemoryChars) break;
+            sb.AppendLine(line);
+            usedChars += line.Length;
+        }
+
+        return sb.ToString();
     }
 
     /// <summary>

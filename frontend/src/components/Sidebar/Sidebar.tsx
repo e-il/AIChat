@@ -1,11 +1,13 @@
-import { MessageSquarePlus, Trash2, Bot, MessageCircle, Brain, MoreVertical } from 'lucide-react';
+import { MessageSquarePlus, Trash2, Bot, MessageCircle, Brain, MoreVertical, PencilLine, Languages } from 'lucide-react';
 import type { ConversationSummary } from '../../types';
+import { REWRITE_PROMPT_PROFILE_ID, TRANSLATE_PROMPT_PROFILE_ID } from '../../services/promptProfiles';
 
 interface SidebarProps {
   conversations: ConversationSummary[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onNewWithProfile: (profileId: string) => void;
   onDelete: (id: string) => void;
   onOpenMemory: () => void;
   isOpen: boolean;
@@ -17,6 +19,7 @@ export function Sidebar({
   activeId,
   onSelect,
   onNew,
+  onNewWithProfile,
   onDelete,
   onOpenMemory,
   isOpen,
@@ -32,7 +35,7 @@ export function Sidebar({
           onClick={onClose}
         />
       )}
-      
+
       {/* Sidebar - Ethereal Design */}
       <aside
         className={`
@@ -61,13 +64,34 @@ export function Sidebar({
         {/* New Chat CTA */}
         <button
           onClick={onNew}
-          className="flex items-center justify-center gap-2 w-full py-3 px-4 mb-6 
-                     bg-primary text-on-primary rounded-full font-semibold 
+          className="flex items-center justify-center gap-2 w-full py-3 px-4 mb-4
+                     bg-primary text-on-primary rounded-full font-semibold
                      transition-all hover:bg-primary-dim active:scale-[0.98] cursor-pointer"
         >
           <MessageSquarePlus size={18} />
           <span className="font-body text-sm">New Chat</span>
         </button>
+
+        <div className="grid grid-cols-2 gap-2 mb-6">
+          <button
+            onClick={() => onNewWithProfile(REWRITE_PROMPT_PROFILE_ID)}
+            className="flex flex-col items-start gap-1 rounded-2xl bg-surface-container-lowest
+                       px-3 py-3 text-left text-slate-700 shadow-sm transition-colors
+                       hover:bg-surface-container cursor-pointer"
+          >
+            <PencilLine size={17} className="text-primary" />
+            <span className="text-xs font-semibold">Rewrite</span>
+          </button>
+          <button
+            onClick={() => onNewWithProfile(TRANSLATE_PROMPT_PROFILE_ID)}
+            className="flex flex-col items-start gap-1 rounded-2xl bg-surface-container-lowest
+                       px-3 py-3 text-left text-slate-700 shadow-sm transition-colors
+                       hover:bg-surface-container cursor-pointer"
+          >
+            <Languages size={17} className="text-primary" />
+            <span className="text-xs font-semibold">Translate</span>
+          </button>
+        </div>
 
         {/* Navigation Scrollable Area */}
         <nav className="flex-1 overflow-y-auto sidebar-scroll space-y-6 pr-2">
@@ -103,7 +127,7 @@ export function Sidebar({
                         e.stopPropagation();
                         onDelete(conv.id);
                       }}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 
+                      className="opacity-0 group-hover:opacity-100 p-1.5
                                  hover:bg-red-100 rounded-full transition-all cursor-pointer"
                     >
                       <Trash2 size={12} className="text-red-500" />
@@ -125,10 +149,10 @@ export function Sidebar({
             <Brain size={18} />
             <span className="text-sm">Memory</span>
           </button>
-          
+
           {/* User Profile */}
           <div className="flex items-center gap-3 px-4 py-4 mt-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary-container 
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary-container
                             flex items-center justify-center text-white text-sm font-semibold">
               U
             </div>

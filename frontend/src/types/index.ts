@@ -62,6 +62,20 @@ export interface ModelsResponse {
   maxMessagesOptions: number[];
 }
 
+export interface PromptProfile {
+  id: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  inputPlaceholder: string;
+  isBuiltIn: boolean;
+}
+
+export interface PromptProfilesResponse {
+  profiles: PromptProfile[];
+  maxCustomSystemPromptLength: number;
+}
+
 // Memory modes that the server accepts on SendMessage.
 // 'auto' = server retrieves relevant memory (default)
 // 'off'  = don't inject any memory for this turn
@@ -73,6 +87,7 @@ export interface ConversationSettings {
   maxContextSize: number;
   maxMessages: number;
   memoryMode?: MemoryMode;
+  promptProfileId?: string;
 }
 
 export type MemoryType = 'fact' | 'preference' | 'summary';

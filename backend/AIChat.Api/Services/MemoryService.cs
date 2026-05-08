@@ -24,11 +24,16 @@ public class MemoryService : IMemoryService
     private readonly string _memoryDir;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
     private readonly IAzureOpenAIService _openAI;
+    private readonly IMemoryRetrievalMetrics _metrics;
     private readonly ILogger<MemoryService> _logger;
 
-    public MemoryService(IAzureOpenAIService openAI, ILogger<MemoryService> logger)
+    public MemoryService(
+        IAzureOpenAIService openAI,
+        IMemoryRetrievalMetrics metrics,
+        ILogger<MemoryService> logger)
     {
         _openAI = openAI;
+        _metrics = metrics;
         _logger = logger;
         _memoryDir = Path.Combine("data", "memory");
         Directory.CreateDirectory(_memoryDir);
@@ -129,8 +134,10 @@ public class MemoryService : IMemoryService
         var queryTokens = Tokenize(query);
 
         var preferences = all.Where(m => m.Type == MemoryType.Preference).ToList();
-        var scorable = all
-            .Where(m => m.Type != MemoryType.Preference)
+        var scorableMemories = all.Where(m => m.Type != MemoryType.Preference).ToList();
+        EmitEmbeddingScoringMetric(queryEmbedding, scorableMemories);
+
+        var scorable = scorableMemories
             .Select(m => new { Memory = m, Score = ScoreMemory(m, queryEmbedding, queryTokens) })
             .OrderByDescending(x => x.Score)
             .Take(limit)
@@ -254,6 +261,77 @@ public class MemoryService : IMemoryService
     }
 
     // ---------- scoring ----------
+
+    private void EmitEmbeddingScoringMetric(float[]? queryEmbedding, List<Memory> scorableMemories)
+    {
+        if (scorableMemories.Count == 0) return;
+
+        if (queryEmbedding is null)
+        {
+            _metrics.RecordRetrievalScoring(
+                MemoryRetrievalMetrics.ScoringModeKeyword,
+                MemoryRetrievalMetrics.FallbackReasonQueryEmbeddingMissing,
+                scorableMemories.Count,
+                embeddingScored: 0,
+                missingEmbedding: scorableMemories.Count(m => m.Embedding is null),
+                dimensionMismatch: 0,
+                dimensions: 0);
+            return;
+        }
+
+        var usable = 0;
+        var missing = 0;
+        var dimensionMismatch = 0;
+
+        foreach (var memory in scorableMemories)
+        {
+            if (memory.Embedding is null)
+            {
+                missing++;
+            }
+            else if (memory.Embedding.Length != queryEmbedding.Length)
+            {
+                dimensionMismatch++;
+            }
+            else
+            {
+                usable++;
+            }
+        }
+
+        if (missing == 0 && dimensionMismatch == 0)
+        {
+            _metrics.RecordRetrievalScoring(
+                MemoryRetrievalMetrics.ScoringModeEmbedding,
+                MemoryRetrievalMetrics.FallbackReasonNone,
+                scorableMemories.Count,
+                usable,
+                missingEmbedding: 0,
+                dimensionMismatch: 0,
+                queryEmbedding.Length);
+            return;
+        }
+
+        _metrics.RecordRetrievalScoring(
+            MemoryRetrievalMetrics.ScoringModePartialFallback,
+            GetEmbeddingFallbackReason(missing, dimensionMismatch),
+            scorableMemories.Count,
+            usable,
+            missing,
+            dimensionMismatch,
+            queryEmbedding.Length);
+    }
+
+    private static string GetEmbeddingFallbackReason(int missing, int dimensionMismatch)
+    {
+        return (missing, dimensionMismatch) switch
+        {
+            (> 0, > 0) => MemoryRetrievalMetrics.FallbackReasonMixed,
+            (> 0, _) => MemoryRetrievalMetrics.FallbackReasonMemoryEmbeddingMissing,
+            (_, > 0) => MemoryRetrievalMetrics.FallbackReasonDimensionMismatch,
+            _ => MemoryRetrievalMetrics.FallbackReasonNone,
+        };
+    }
 
     private static double ScoreMemory(Memory memory, float[]? queryEmbedding, HashSet<string> queryTokens)
     {

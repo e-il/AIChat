@@ -105,7 +105,15 @@ export const conversationStore = {
       title: conversation.title,
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
-      messages: messages.map(({ conversationId: _cid, ...rest }) => rest),
+      messages: messages.map(msg => ({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        usedMemories: msg.usedMemories,
+        attachments: msg.attachments,
+        toolCalls: msg.toolCalls,
+      })),
     };
   },
 

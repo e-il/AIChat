@@ -1,4 +1,5 @@
 import type { ConversationSettings } from '../types';
+import { DEFAULT_PROMPT_PROFILE_ID } from './promptProfiles';
 
 const SETTINGS_KEY_PREFIX = 'aichat_settings_';
 const GLOBAL_SETTINGS_KEY = 'aichat_global_settings';
@@ -19,12 +20,18 @@ export function getConversationSettings(conversationId: string, defaultContextSi
         maxContextSize: parsed.maxContextSize ?? defaultContextSize,
         maxMessages: parsed.maxMessages ?? defaultMaxMessages,
         memoryMode: parsed.memoryMode ?? 'auto',
+        promptProfileId: parsed.promptProfileId ?? DEFAULT_PROMPT_PROFILE_ID,
       };
     } catch {
       // Invalid JSON, fall through to defaults
     }
   }
-  return { maxContextSize: defaultContextSize, maxMessages: defaultMaxMessages, memoryMode: 'auto' };
+  return {
+    maxContextSize: defaultContextSize,
+    maxMessages: defaultMaxMessages,
+    memoryMode: 'auto',
+    promptProfileId: DEFAULT_PROMPT_PROFILE_ID,
+  };
 }
 
 // Save settings for a specific conversation

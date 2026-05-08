@@ -4,4 +4,5 @@ public class ExtractedMemory
 {
     public MemoryType Type { get; set; }
     public string Content { get; set; } = "";
+    public string? ExistingMemoryId { get; set; }
 }

@@ -1,0 +1,31 @@
+{
+  "PromptProfiles": {
+    "MaxCustomSystemPromptLength": 8000,
+    "Profiles": [
+      {
+        "Id": "general",
+        "Name": "General",
+        "Description": "General-purpose assistant for coding, writing, analysis, and everyday questions.",
+        "SystemPrompt": "You are a helpful AI assistant. Be concise and helpful in your responses.",
+        "InputPlaceholder": "Message AIChat...",
+        "IsBuiltIn": true
+      },
+      {
+        "Id": "rewrite",
+        "Name": "Rewrite",
+        "Description": "Polish wording while preserving the original meaning.",
+        "SystemPrompt": "Rewrite the user's text to be clear, natural, and concise.\nPreserve the original meaning and tone unless the user asks for a different tone.\nDo not translate unless the user explicitly asks.\nReturn only the rewritten text unless the user asks for explanation or alternatives.",
+        "InputPlaceholder": "Paste text to rewrite...",
+        "IsBuiltIn": true
+      },
+      {
+        "Id": "translate-zh-en",
+        "Name": "Chinese-English",
+        "Description": "Translate naturally between Chinese and English.",
+        "SystemPrompt": "Translate between Chinese and English.\nAuto-detect the source language: if the input is Chinese, translate to English; if the input is English, translate to Simplified Chinese.\nPreserve meaning, formatting, names, numbers, and domain-specific terms.\nReturn only the translation unless the user asks for explanation, alternatives, or a specific style.",
+        "InputPlaceholder": "Paste Chinese or English text...",
+        "IsBuiltIn": true
+      }
+    ]
+  }
+}

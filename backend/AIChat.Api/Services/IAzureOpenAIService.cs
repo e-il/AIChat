@@ -29,7 +29,10 @@ public interface IAzureOpenAIService
     /// Extracts durable memories (facts/preferences/summaries) from a conversation transcript.
     /// Returns an empty list if nothing is worth remembering — empty is a valid, successful result.
     /// </summary>
-    Task<List<ExtractedMemory>> ExtractMemoriesAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default);
+    Task<List<ExtractedMemory>> ExtractMemoriesAsync(
+        List<ChatMessage> messages,
+        List<Memory> existingMemories,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Generates an embedding vector for the given text. Returns null if embeddings

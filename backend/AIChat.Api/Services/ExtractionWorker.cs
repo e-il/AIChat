@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Hosting;
+using AIChat.Api.Models;
 
 namespace AIChat.Api.Services;
 
@@ -61,16 +62,70 @@ public class ExtractionWorker : BackgroundService
         _logger.LogInformation("Extracting memories: user={UserId}, conversation={ConversationId}, messages={Count}",
             job.UserId, job.ConversationId, job.Messages.Count);
 
-        var extracted = await _openAI.ExtractMemoriesAsync(job.Messages, ct);
+        var existingMemories = await _memory.GetAllAsync(job.UserId);
+        var existingById = existingMemories.ToDictionary(m => m.Id);
+        var seen = existingMemories
+            .Select(m => NormalizeMemoryContent(m.Content))
+            .Where(normalized => normalized.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
 
+        var extracted = await _openAI.ExtractMemoriesAsync(job.Messages, existingMemories, ct);
+        var created = 0;
+        var updated = 0;
+        var skipped = 0;
         foreach (var item in extracted)
         {
-            await _memory.CreateAsync(job.UserId, item.Type, item.Content, job.ConversationId);
+            var content = item.Content.Trim();
+            var normalized = NormalizeMemoryContent(content);
+            if (normalized.Length == 0 || seen.Contains(normalized))
+            {
+                skipped++;
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.ExistingMemoryId)
+                && existingById.TryGetValue(item.ExistingMemoryId, out var existing))
+            {
+                var updatedMemory = await _memory.UpdateAsync(job.UserId, existing.Id, item.Type, content);
+                if (updatedMemory is null)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                seen.Add(normalized);
+                updated++;
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.ExistingMemoryId))
+            {
+                _logger.LogWarning("Extraction returned unknown existingMemoryId={MemoryId}; creating as new if not duplicate",
+                    item.ExistingMemoryId);
+            }
+
+            await _memory.CreateAsync(job.UserId, item.Type, content, job.ConversationId);
+            seen.Add(normalized);
+            created++;
         }
 
         await _checkpoint.SetAsync(job.UserId, job.ConversationId, job.LastMessageId);
 
-        _logger.LogInformation("Extraction complete: user={UserId}, conversation={ConversationId}, created={Count}",
-            job.UserId, job.ConversationId, extracted.Count);
+        _logger.LogInformation(
+            "Extraction complete: user={UserId}, conversation={ConversationId}, created={Created}, updated={Updated}, skipped={Skipped}",
+            job.UserId, job.ConversationId, created, updated, skipped);
+    }
+
+    private static string NormalizeMemoryContent(string content)
+    {
+        var normalizedChars = content
+            .Trim()
+            .ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ')
+            .ToArray();
+
+        return string.Join(
+            ' ',
+            new string(normalizedChars).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     }
 }

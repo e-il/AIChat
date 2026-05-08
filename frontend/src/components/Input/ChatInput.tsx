@@ -20,6 +20,7 @@ interface ChatInputProps {
   pendingAttachments: MessageAttachment[];
   onAttachmentsChange: React.Dispatch<React.SetStateAction<MessageAttachment[]>>;
   onAuthError?: () => void;
+  placeholder?: string;
 }
 
 interface UploadingItem {
@@ -255,6 +256,7 @@ export function ChatInput({
   pendingAttachments,
   onAttachmentsChange,
   onAuthError,
+  placeholder = 'Message AIChat...',
 }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [uploading, setUploading] = useState<UploadingItem[]>([]);
@@ -400,7 +402,7 @@ export function ChatInput({
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Message AIChat..."
+            placeholder={placeholder}
             disabled={disabled}
             rows={1}
             className="flex-1 bg-transparent border-none focus:ring-0 focus:outline-none

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import * as signalR from '@microsoft/signalr';
 import type { Memory, Message, MessageAttachment } from '../types';
 import { getAuthCode } from '../services/auth';
+import { DEFAULT_PROMPT_PROFILE_ID } from '../services/promptProfiles';
 
 export interface StreamCompletePayload {
   conversationId: string;
@@ -26,6 +27,8 @@ export function useChat() {
     maxMessages: number,
     memoryMode: 'auto' | 'off' | 'explicit' = 'auto',
     explicitMemoryIds: string[] | null = null,
+    promptProfileId: string = DEFAULT_PROMPT_PROFILE_ID,
+    customSystemPrompt: string | null = null,
   ) => {
     const authCode = getAuthCode();
     if (!authCode) {
@@ -55,13 +58,13 @@ export function useChat() {
     });
 
     // The model invoked a tool — show "Generating image…" while we wait for the result.
-    connection.on('ToolCallStart', (_convId: string, toolName: string, _toolCallId: string) => {
+    connection.on('ToolCallStart', (_convId: string, toolName: string) => {
       setToolStatus(toolName);
     });
 
     // Tool produced an attachment (e.g. generated image). Surface it live so the
     // user sees the picture appear before the wrap-up text streams in.
-    connection.on('AttachmentReady', (_convId: string, attachment: MessageAttachment, _toolCallId: string) => {
+    connection.on('AttachmentReady', (_convId: string, attachment: MessageAttachment) => {
       attachments.push(attachment);
       setStreamingAttachments(prev => [...prev, attachment]);
       setToolStatus(null);
@@ -95,10 +98,18 @@ export function useChat() {
 
     try {
       await connection.start();
-      // SignalR requires exact arg count -- server method has 7 params even though
-      // the last two have C# defaults (SignalR doesn't honor default values).
       connection
-        .send('SendMessage', conversationId, messages, modelId, maxContextSize, maxMessages, memoryMode, explicitMemoryIds)
+        .send('SendMessage', {
+          conversationId,
+          messages,
+          modelId,
+          maxContextSize,
+          maxMessages,
+          memoryMode,
+          explicitMemoryIds,
+          promptProfileId,
+          customSystemPrompt,
+        })
         .catch(err => console.error('SignalR send() rejected:', err));
     } catch (err) {
       console.error('Failed to send message:', err);
