@@ -62,16 +62,14 @@ public class ImagesController : ControllerBase
     }
 
     /// <summary>
-    /// Serves a stored image. Auth-scoped: the user is resolved from the auth header,
-    /// not from the URL — so users cannot enumerate other users' files.
+    /// Serves a stored image. Unauthenticated: filenames are unguessable 128-bit GUIDs,
+    /// so the image is located by filename alone. The endpoint is reachable via plain
+    /// <img src> without any token in the URL.
     /// </summary>
     [HttpGet("{filename}")]
     public async Task<IActionResult> Get(string filename, CancellationToken ct)
     {
-        var userId = CurrentUserId;
-        if (userId is null) return Unauthorized();
-
-        var read = await _storage.TryReadAsync(userId, filename, ct);
+        var read = await _storage.TryReadByFilenameAsync(filename, ct);
         if (read is null) return NotFound();
 
         return File(read.Value.Bytes.ToArray(), read.Value.MimeType);

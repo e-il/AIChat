@@ -27,15 +27,11 @@ export const imagesApi = {
   },
 
   /**
-   * Builds an authenticated image URL by appending ?access_token=. <img src> can't
-   * send custom headers, so the backend accepts the token via query string for
-   * GET /api/images/* (mirrors the SignalR convention).
+   * Returns the image URL unchanged. Image GETs are public (filenames are unguessable
+   * GUIDs), so no token is appended. Kept as a single indirection point in case image
+   * URL handling needs to change again.
    */
   buildAuthedUrl(url: string | undefined | null): string {
-    if (!url) return '';
-    const authCode = getAuthCode();
-    if (!authCode) return url;
-    const sep = url.includes('?') ? '&' : '?';
-    return `${url}${sep}access_token=${encodeURIComponent(authCode)}`;
+    return url ?? '';
   },
 };

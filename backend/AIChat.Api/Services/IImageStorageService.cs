@@ -33,6 +33,15 @@ public interface IImageStorageService
         string userId, string filename, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads a stored image by filename alone, locating it across user directories.
+    /// Filenames are globally-unique 128-bit GUIDs, so this is unambiguous. Used by the
+    /// public (unauthenticated) image-serving endpoint. Returns null if not found or if
+    /// the filename is unsafe.
+    /// </summary>
+    Task<(ReadOnlyMemory<byte> Bytes, string MimeType)?> TryReadByFilenameAsync(
+        string filename, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Saves the model's description of a generated image as `{imageId}.description.txt`
     /// next to the image bytes. Called after the second tool-calling pass produces text.
     /// </summary>

@@ -109,9 +109,33 @@ public class ImageStorageService : IImageStorageService
     {
         var path = TryGetPath(userId, filename);
         if (path is null) return null;
+        return (await File.ReadAllBytesAsync(path, cancellationToken), MimeForFile(filename));
+    }
 
-        var ext = Path.GetExtension(filename).TrimStart('.').ToLowerInvariant();
-        var mime = ext switch
+    public async Task<(ReadOnlyMemory<byte> Bytes, string MimeType)?> TryReadByFilenameAsync(
+        string filename, CancellationToken cancellationToken = default)
+    {
+        // Filenames are globally-unique GUIDs, so the owning user directory is irrelevant
+        // for lookup. SafeFilename blocks path traversal; we still join + verify each
+        // candidate path stays within its user directory as defence in depth.
+        if (!SafeFilename.IsMatch(filename) || !Directory.Exists(_root)) return null;
+
+        foreach (var userDir in Directory.EnumerateDirectories(_root))
+        {
+            var path = Path.Combine(userDir, filename);
+            var fullUserDir = Path.GetFullPath(userDir);
+            var fullPath = Path.GetFullPath(path);
+            if (!fullPath.StartsWith(fullUserDir, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!File.Exists(fullPath)) continue;
+
+            return (await File.ReadAllBytesAsync(fullPath, cancellationToken), MimeForFile(filename));
+        }
+
+        return null;
+    }
+
+    private static string MimeForFile(string filename) =>
+        Path.GetExtension(filename).TrimStart('.').ToLowerInvariant() switch
         {
             "png" => "image/png",
             "jpg" or "jpeg" => "image/jpeg",
@@ -119,10 +143,6 @@ public class ImageStorageService : IImageStorageService
             "gif" => "image/gif",
             _ => "application/octet-stream",
         };
-
-        var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
-        return (bytes, mime);
-    }
 
     private static void ValidateUserId(string userId)
     {

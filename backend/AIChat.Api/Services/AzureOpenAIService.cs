@@ -19,6 +19,11 @@ public class AzureOpenAIService : IAzureOpenAIService
     private const string ImageFetchHttpClient = "azure-openai-image-fetch";
     private const int MaxExtractionExistingMemoryChars = 4000;
 
+    // On follow-up turns, only the most recent few AI-generated images are inlined as
+    // image bytes (so the model can actually "see" and edit them). Older generated images
+    // are represented by their tool-result text (prompt + caption) to bound context cost.
+    private const int MaxInlinedGeneratedImages = 2;
+
     private readonly AzureOpenAIClient _client;
     private readonly ConcurrentDictionary<string, ChatClient> _chatClients = new();
     private readonly Lazy<EmbeddingClient?> _embeddingClient;
@@ -307,13 +312,16 @@ public class AzureOpenAIService : IAzureOpenAIService
     ///    them as ImageParts (Azure OpenAI cannot fetch our internal URLs).
     ///  - Assistant messages with persisted ToolCalls: expand into the canonical
     ///    asst_tool_call → tool_result triple so the model sees the same shape on
-    ///    follow-up turns as it produced originally.
+    ///    follow-up turns as it produced originally. The tool_result text carries the
+    ///    generation prompt plus the saved caption, and the most recent generated images
+    ///    are additionally inlined as a follow-up user image message so the model can see them.
     ///  - Plain text messages: straightforward 1:1.
     /// </summary>
     private async Task<List<OpenAI.Chat.ChatMessage>> TranslateAsync(
         List<AppChatMessage> messages, string userId, CancellationToken ct)
     {
         var result = new List<OpenAI.Chat.ChatMessage>(messages.Count);
+        var inlineImageIds = SelectRecentGeneratedImageIds(messages, MaxInlinedGeneratedImages);
 
         foreach (var m in messages)
         {
@@ -349,7 +357,7 @@ public class AzureOpenAIService : IAzureOpenAIService
                             string toolResult;
                             if (tc.Name == "generate_image" && m.Attachments is { Count: > 0 } atts && i < atts.Count)
                             {
-                                toolResult = BuildImageOkResultJson(atts[i]);
+                                toolResult = await BuildImageReplayResultJsonAsync(userId, atts[i], ct);
                             }
                             else
                             {
@@ -362,6 +370,12 @@ public class AzureOpenAIService : IAzureOpenAIService
                         {
                             result.Add(new AssistantChatMessage(m.Content));
                         }
+
+                        // Inline the most recent generated image(s) as a follow-up user image
+                        // message. Tool/assistant messages can't carry image parts in chat
+                        // completions, so this synthetic user turn is how the model actually
+                        // "sees" what it drew and can edit it on request.
+                        await AppendInlinedImagesAsync(result, m, userId, inlineImageIds, ct);
                     }
                     else
                     {
@@ -402,20 +416,8 @@ public class AzureOpenAIService : IAzureOpenAIService
 
         foreach (var att in m.Attachments)
         {
-            if (att.Type != "image") continue;
-            var filename = ExtractFilename(att.Url);
-            if (filename is null) continue;
-
-            var read = await _imageStorage.TryReadAsync(userId, filename, ct);
-            if (read is null)
-            {
-                _logger.LogWarning("Vision input attachment not found on disk: {Filename}", filename);
-                continue;
-            }
-
-            parts.Add(ChatMessageContentPart.CreateImagePart(
-                BinaryData.FromBytes(read.Value.Bytes),
-                read.Value.MimeType));
+            var part = await TryBuildImagePartAsync(userId, att, ct);
+            if (part is not null) parts.Add(part);
         }
 
         // If we somehow ended up with no content parts (e.g. all attachments missing),
@@ -423,6 +425,106 @@ public class AzureOpenAIService : IAzureOpenAIService
         if (parts.Count == 0) parts.Add(ChatMessageContentPart.CreateTextPart(m.Content ?? ""));
 
         return new UserChatMessage(parts);
+    }
+
+    /// <summary>
+    /// Reads a stored image attachment and builds an OpenAI image content part, or returns
+    /// null if it isn't an image, the URL is unparseable, or the file is missing on disk.
+    /// </summary>
+    private async Task<ChatMessageContentPart?> TryBuildImagePartAsync(
+        string userId, MessageAttachment att, CancellationToken ct)
+    {
+        if (att.Type != "image") return null;
+        var filename = ExtractFilename(att.Url);
+        if (filename is null) return null;
+
+        var read = await _imageStorage.TryReadAsync(userId, filename, ct);
+        if (read is null)
+        {
+            _logger.LogWarning("Image attachment not found on disk: {Filename}", filename);
+            return null;
+        }
+
+        return ChatMessageContentPart.CreateImagePart(
+            BinaryData.FromBytes(read.Value.Bytes), read.Value.MimeType);
+    }
+
+    /// <summary>
+    /// Returns the attachment ids of the most recent <paramref name="max"/> AI-generated
+    /// images across the conversation. These get their bytes inlined on replay; older ones
+    /// are represented by tool-result text only.
+    /// </summary>
+    private static HashSet<string> SelectRecentGeneratedImageIds(List<AppChatMessage> messages, int max)
+    {
+        var ids = new List<string>();
+        foreach (var m in messages)
+        {
+            if (m.Role != "assistant"
+                || m.ToolCalls is not { Count: > 0 } tcs
+                || m.Attachments is not { Count: > 0 } atts)
+            {
+                continue;
+            }
+
+            for (var i = 0; i < tcs.Count && i < atts.Count; i++)
+            {
+                if (tcs[i].Name == "generate_image" && atts[i].Type == "image")
+                {
+                    ids.Add(atts[i].Id);
+                }
+            }
+        }
+
+        return ids.Skip(Math.Max(0, ids.Count - max)).ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Appends a synthetic user message carrying the bytes of this assistant turn's generated
+    /// images that are in the recent-inline set, so the model can see them on follow-up turns.
+    /// </summary>
+    private async Task AppendInlinedImagesAsync(
+        List<OpenAI.Chat.ChatMessage> result,
+        AppChatMessage m,
+        string userId,
+        HashSet<string> inlineImageIds,
+        CancellationToken ct)
+    {
+        if (m.Attachments is not { Count: > 0 } atts) return;
+
+        var imageParts = new List<ChatMessageContentPart>();
+        foreach (var att in atts)
+        {
+            if (!inlineImageIds.Contains(att.Id)) continue;
+            var part = await TryBuildImagePartAsync(userId, att, ct);
+            if (part is not null) imageParts.Add(part);
+        }
+
+        if (imageParts.Count == 0) return;
+
+        imageParts.Insert(0, ChatMessageContentPart.CreateTextPart(
+            "(Reference: image(s) you generated earlier in this conversation, shown so you can see and edit them.)"));
+        result.Add(new UserChatMessage(imageParts));
+    }
+
+    /// <summary>
+    /// Tool-result JSON for a replayed generated image: the original prompt plus the saved
+    /// caption (the model's own description), so even when the bytes aren't inlined the model
+    /// retains a faithful text representation of what it drew.
+    /// </summary>
+    private async Task<string> BuildImageReplayResultJsonAsync(
+        string userId, MessageAttachment a, CancellationToken ct)
+    {
+        var caption = await _imageStorage.TryReadDescriptionAsync(userId, a.Id, ct);
+        return JsonSerializer.Serialize(new
+        {
+            status = "ok",
+            imageId = a.Id,
+            prompt = a.Prompt,
+            revisedPrompt = a.RevisedPrompt,
+            width = a.Width,
+            height = a.Height,
+            caption = string.IsNullOrWhiteSpace(caption) ? null : caption,
+        });
     }
 
     private static string? ExtractFilename(string? url)

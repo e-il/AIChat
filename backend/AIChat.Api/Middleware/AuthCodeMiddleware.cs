@@ -22,17 +22,17 @@ public class AuthCodeMiddleware
             return;
         }
 
-        var authCode = context.Request.Headers["X-Auth-Code"].FirstOrDefault();
-
-        // Fallback: GET /api/images/{file} is loaded by <img src=...> which can't send
-        // custom headers. Allow ?access_token=<code> like SignalR does. Scoped tightly to
-        // image GETs to avoid broader query-string-token exposure.
-        if (string.IsNullOrEmpty(authCode)
-            && HttpMethods.IsGet(context.Request.Method)
+        // Public image serving: GET /api/images/{filename} is loaded by <img src=...> and
+        // is left unauthenticated on purpose — filenames are unguessable 128-bit GUIDs.
+        // Only GETs are public; upload/generate POSTs under /api/images still require auth.
+        if (HttpMethods.IsGet(context.Request.Method)
             && context.Request.Path.StartsWithSegments("/api/images"))
         {
-            authCode = context.Request.Query["access_token"].FirstOrDefault();
+            await _next(context);
+            return;
         }
+
+        var authCode = context.Request.Headers["X-Auth-Code"].FirstOrDefault();
 
         var userId = identity.ResolveUserId(authCode);
 
