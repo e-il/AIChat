@@ -11,6 +11,7 @@ public class ExtractionWorker : BackgroundService
     private readonly IAzureOpenAIService _openAI;
     private readonly IMemoryService _memory;
     private readonly IExtractionCheckpointService _checkpoint;
+    private readonly IdleExtractionScheduler _scheduler;
     private readonly ILogger<ExtractionWorker> _logger;
 
     public ExtractionWorker(
@@ -18,18 +19,24 @@ public class ExtractionWorker : BackgroundService
         IAzureOpenAIService openAI,
         IMemoryService memory,
         IExtractionCheckpointService checkpoint,
+        IdleExtractionScheduler scheduler,
         ILogger<ExtractionWorker> logger)
     {
         _queue = queue;
         _openAI = openAI;
         _memory = memory;
         _checkpoint = checkpoint;
+        _scheduler = scheduler;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("ExtractionWorker started");
+
+        // Reload any idle-extraction snapshots persisted before the last shutdown so their
+        // timers resume. Owned here so the scheduler doesn't need to be a hosted service.
+        await _scheduler.ReloadPendingAsync();
 
         await foreach (var job in _queue.Reader.ReadAllAsync(stoppingToken))
         {
@@ -55,6 +62,13 @@ public class ExtractionWorker : BackgroundService
         }
 
         _logger.LogInformation("ExtractionWorker stopped");
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        // Cancel the scheduler's idle timers as part of this worker's shutdown.
+        _scheduler.CancelAll();
+        await base.StopAsync(cancellationToken);
     }
 
     private async Task ProcessJobAsync(ExtractionJob job, CancellationToken ct)

@@ -1,6 +1,3 @@
-using System.Collections.Concurrent;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using AIChat.Api.Models;
 
@@ -11,43 +8,29 @@ public class MemoryService : IMemoryService
     // Total character cap on a retrieved memory block. ~500 tokens at 4 chars/token.
     private const int MaxRetrievedChars = 2000;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true,
-    };
-
-    private static readonly Regex SafeUserId = new(@"^[A-Za-z0-9_\-]+$", RegexOptions.Compiled);
-
-    private readonly string _memoryDir;
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
+    private readonly UserJsonStore<List<Memory>> _store;
     private readonly IAzureOpenAIService _openAI;
     private readonly IMemoryRetrievalMetrics _metrics;
-    private readonly ILogger<MemoryService> _logger;
 
     public MemoryService(
+        UserJsonStore<List<Memory>> store,
         IAzureOpenAIService openAI,
-        IMemoryRetrievalMetrics metrics,
-        ILogger<MemoryService> logger)
+        IMemoryRetrievalMetrics metrics)
     {
+        _store = store;
         _openAI = openAI;
         _metrics = metrics;
-        _logger = logger;
-        _memoryDir = Path.Combine("data", "memory");
-        Directory.CreateDirectory(_memoryDir);
     }
 
     public async Task<List<Memory>> GetAllAsync(string userId)
     {
-        var memories = await WithLock(userId, () => LoadAsync(userId));
+        var memories = await _store.ReadAsync(userId);
         return memories.OrderByDescending(m => m.CreatedAt).ToList();
     }
 
     public async Task<Memory?> GetAsync(string userId, string id)
     {
-        var memories = await WithLock(userId, () => LoadAsync(userId));
+        var memories = await _store.ReadAsync(userId);
         return memories.FirstOrDefault(m => m.Id == id);
     }
 
@@ -56,7 +39,7 @@ public class MemoryService : IMemoryService
         var idSet = ids.ToHashSet();
         if (idSet.Count == 0) return new List<Memory>();
 
-        var memories = await WithLock(userId, () => LoadAsync(userId));
+        var memories = await _store.ReadAsync(userId);
         return memories.Where(m => idSet.Contains(m.Id)).ToList();
     }
 
@@ -65,9 +48,8 @@ public class MemoryService : IMemoryService
         // Generate embedding outside the per-user lock to avoid holding it during an LLM call.
         var embedding = await _openAI.TryGenerateEmbeddingAsync(content);
 
-        return await WithLock(userId, async () =>
+        return await _store.MutateAsync(userId, memories =>
         {
-            var memories = await LoadAsync(userId);
             var memory = new Memory
             {
                 UserId = userId,
@@ -77,7 +59,6 @@ public class MemoryService : IMemoryService
                 Embedding = embedding,
             };
             memories.Add(memory);
-            await SaveAsync(userId, memories);
             return memory;
         });
     }
@@ -92,9 +73,8 @@ public class MemoryService : IMemoryService
             newEmbedding = await _openAI.TryGenerateEmbeddingAsync(content!);
         }
 
-        return await WithLock(userId, async () =>
+        return await _store.MutateAsync(userId, memories =>
         {
-            var memories = await LoadAsync(userId);
             var memory = memories.FirstOrDefault(m => m.Id == id);
             if (memory is null) return (Memory?)null;
 
@@ -105,27 +85,18 @@ public class MemoryService : IMemoryService
                 memory.Embedding = newEmbedding;
             }
 
-            await SaveAsync(userId, memories);
             return memory;
         });
     }
 
     public Task<bool> DeleteAsync(string userId, string id)
     {
-        return WithLock(userId, async () =>
-        {
-            var memories = await LoadAsync(userId);
-            var removed = memories.RemoveAll(m => m.Id == id);
-            if (removed == 0) return false;
-
-            await SaveAsync(userId, memories);
-            return true;
-        });
+        return _store.MutateAsync(userId, memories => memories.RemoveAll(m => m.Id == id) > 0);
     }
 
     public async Task<List<Memory>> RetrieveAsync(string userId, string query, int limit = 5)
     {
-        var all = await WithLock(userId, () => LoadAsync(userId));
+        var all = await _store.ReadAsync(userId);
         if (all.Count == 0) return new List<Memory>();
 
         // Prefer embedding-based similarity; fall back to keyword overlap when either
@@ -163,101 +134,16 @@ public class MemoryService : IMemoryService
         var idSet = ids.ToHashSet();
         if (idSet.Count == 0) return Task.CompletedTask;
 
-        return WithLock(userId, async () =>
+        return _store.MutateAsync(userId, memories =>
         {
-            var memories = await LoadAsync(userId);
             var now = DateTime.UtcNow;
-            var touched = 0;
-
             foreach (var memory in memories)
             {
                 if (!idSet.Contains(memory.Id)) continue;
                 memory.UseCount++;
                 memory.LastUsedAt = now;
-                touched++;
-            }
-
-            if (touched > 0)
-            {
-                await SaveAsync(userId, memories);
             }
         });
-    }
-
-    // ---------- IO + locking ----------
-
-    private SemaphoreSlim LockFor(string userId) =>
-        _locks.GetOrAdd(userId, _ => new SemaphoreSlim(1, 1));
-
-    private async Task<T> WithLock<T>(string userId, Func<Task<T>> action)
-    {
-        ValidateUserId(userId);
-        var sem = LockFor(userId);
-        await sem.WaitAsync();
-        try
-        {
-            return await action();
-        }
-        finally
-        {
-            sem.Release();
-        }
-    }
-
-    private async Task WithLock(string userId, Func<Task> action)
-    {
-        ValidateUserId(userId);
-        var sem = LockFor(userId);
-        await sem.WaitAsync();
-        try
-        {
-            await action();
-        }
-        finally
-        {
-            sem.Release();
-        }
-    }
-
-    private static void ValidateUserId(string userId)
-    {
-        if (!SafeUserId.IsMatch(userId))
-        {
-            throw new InvalidOperationException($"Invalid userId for file storage: {userId}");
-        }
-    }
-
-    private string PathFor(string userId) => Path.Combine(_memoryDir, $"{userId}.json");
-
-    private async Task<List<Memory>> LoadAsync(string userId)
-    {
-        var path = PathFor(userId);
-        if (!File.Exists(path)) return new List<Memory>();
-
-        try
-        {
-            await using var stream = File.OpenRead(path);
-            var memories = await JsonSerializer.DeserializeAsync<List<Memory>>(stream, JsonOptions);
-            return memories ?? new List<Memory>();
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogError(ex, "Failed to parse memory file for user {UserId}, returning empty", userId);
-            return new List<Memory>();
-        }
-    }
-
-    private async Task SaveAsync(string userId, List<Memory> memories)
-    {
-        var path = PathFor(userId);
-        var tempPath = path + ".tmp";
-
-        await using (var stream = File.Create(tempPath))
-        {
-            await JsonSerializer.SerializeAsync(stream, memories, JsonOptions);
-        }
-
-        File.Move(tempPath, path, overwrite: true);
     }
 
     // ---------- scoring ----------

@@ -1,6 +1,7 @@
 {
   "Memory": {
-    "ExtractionThreshold": 10,
+    "IdleExtractionSeconds": 600,
+    "MinMessagesToExtract": 2,
     "EmbeddingDeploymentName": "text-embedding-3-small"
   }
 }

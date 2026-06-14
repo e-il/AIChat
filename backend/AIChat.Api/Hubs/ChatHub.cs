@@ -13,10 +13,8 @@ public class ChatHub : Hub
     private readonly IAzureOpenAIService _openAIService;
     private readonly IUserIdentityService _identity;
     private readonly IMemoryService _memory;
-    private readonly IExtractionCheckpointService _checkpoint;
-    private readonly IExtractionQueue _extractionQueue;
+    private readonly IdleExtractionScheduler _extractionScheduler;
     private readonly IPromptProfileRegistry _promptProfiles;
-    private readonly MemorySettings _memorySettings;
     private readonly AzureOpenAISettings _azureOpenAISettings;
     private readonly ILogger<ChatHub> _logger;
 
@@ -24,20 +22,16 @@ public class ChatHub : Hub
         IAzureOpenAIService openAIService,
         IUserIdentityService identity,
         IMemoryService memory,
-        IExtractionCheckpointService checkpoint,
-        IExtractionQueue extractionQueue,
+        IdleExtractionScheduler extractionScheduler,
         IPromptProfileRegistry promptProfiles,
-        IOptions<MemorySettings> memorySettings,
         IOptions<AzureOpenAISettings> azureOpenAISettings,
         ILogger<ChatHub> logger)
     {
         _openAIService = openAIService;
         _identity = identity;
         _memory = memory;
-        _checkpoint = checkpoint;
-        _extractionQueue = extractionQueue;
+        _extractionScheduler = extractionScheduler;
         _promptProfiles = promptProfiles;
-        _memorySettings = memorySettings.Value;
         _azureOpenAISettings = azureOpenAISettings.Value;
         _logger = logger;
     }
@@ -170,9 +164,10 @@ public class ChatHub : Hub
             _logger.LogInformation("Stream complete for conversation {ConversationId}", conversationId);
             await Clients.Caller.SendAsync("StreamComplete", conversationId);
 
-            // After successful stream, check whether to queue extraction.
+            // Stage the latest snapshot and (re)start the idle timer. A new turn within the
+            // idle window cancels it; otherwise extraction runs once the conversation goes quiet.
             // messages is the client-sent list (without our injected system prompt).
-            await TryTriggerExtractionAsync(userId, conversationId, messages);
+            await _extractionScheduler.ScheduleAsync(userId, conversationId, messages);
         }
         catch (Exception ex)
         {
@@ -195,68 +190,6 @@ public class ChatHub : Hub
                 : await _memory.GetByIdsAsync(userId, explicitMemoryIds),
             _ => await _memory.RetrieveAsync(userId, query),
         };
-    }
-
-    private async Task TryTriggerExtractionAsync(string userId, string conversationId, List<ChatMessage> messages)
-    {
-        var threshold = _memorySettings.ExtractionThreshold;
-
-        var checkpoint = await _checkpoint.GetAsync(userId, conversationId);
-        var unextracted = GetUnextractedMessages(messages, checkpoint?.LastExtractedMessageId);
-
-        // Threshold gating still uses raw count (so users with image-heavy turns aren't
-        // permanently below threshold), but the extraction batch itself drops messages
-        // with attachments — we don't extract memory from picture-related conversations.
-        if (unextracted.Count < threshold)
-        {
-            _logger.LogDebug("Extraction not triggered: {Count} unextracted < threshold {Threshold}",
-                unextracted.Count, threshold);
-            return;
-        }
-
-        var textOnly = unextracted
-            .Where(m => m.Attachments is null || m.Attachments.Count == 0)
-            .ToList();
-
-        var lastMessageId = unextracted[^1].Id;
-
-        if (textOnly.Count == 0)
-        {
-            _logger.LogInformation(
-                "Extraction skipped: all {Count} unextracted messages have image attachments. Advancing checkpoint to {LastId}.",
-                unextracted.Count, lastMessageId);
-            await _checkpoint.SetAsync(userId, conversationId, lastMessageId);
-            return;
-        }
-
-        var enqueued = _extractionQueue.TryEnqueue(new ExtractionJob
-        {
-            UserId = userId,
-            ConversationId = conversationId,
-            Messages = textOnly,
-            LastMessageId = lastMessageId,
-        });
-
-        if (enqueued)
-        {
-            _logger.LogInformation("Queued extraction: user={UserId}, conversation={ConversationId}, messages={Count}",
-                userId, conversationId, unextracted.Count);
-        }
-        else
-        {
-            _logger.LogDebug("Extraction already pending for conversation {ConversationId}, skipped", conversationId);
-        }
-    }
-
-    private static List<ChatMessage> GetUnextractedMessages(List<ChatMessage> messages, string? lastExtractedMessageId)
-    {
-        if (string.IsNullOrEmpty(lastExtractedMessageId)) return messages;
-
-        var idx = messages.FindIndex(m => m.Id == lastExtractedMessageId);
-        // Checkpoint id not found in the current history -- treat all as unextracted.
-        if (idx < 0) return messages;
-
-        return messages.Skip(idx + 1).ToList();
     }
 
     private static string BuildSystemPrompt(string baseSystemPrompt, List<Memory> memories, string fallbackSystemPrompt)

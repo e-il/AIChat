@@ -491,6 +491,9 @@ public class AzureOpenAIService : IAzureOpenAIService
         var options = new ChatCompletionOptions
         {
             ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
+            // Deterministic, conservative extraction: low temperature keeps the model
+            // from inventing speculative or marginal "memories" and makes results reproducible.
+            Temperature = 0f,
         };
 
         ClientResult<ChatCompletion> result;
@@ -659,33 +662,40 @@ public class AzureOpenAIService : IAzureOpenAIService
         var existingMemoryBlock = BuildExistingMemoryBlock(existingMemories);
 
         var system = """
-You analyze chat transcripts and extract durable user information worth remembering across future conversations.
+You extract durable, long-term user information from a chat transcript so it can help in FUTURE, unrelated conversations.
+
+Default to extracting NOTHING. Only record something if it would plausibly still be useful weeks later in a different conversation. When in doubt, leave it out. An empty result is the common, correct outcome.
 
 Output a JSON object with this exact shape:
 {
   "memories": [
-    { "type": "fact" | "preference" | "summary", "content": "<= 300 chars", "existingMemoryId": "<id to update, or null for new memory>" }
+    { "type": "fact" | "preference" | "summary", "content": "<= 200 chars", "existingMemoryId": "<id to update, or null for new memory>" }
   ]
 }
 
-Extract ONLY:
-- facts: user's name, role, situation, skills, enduring context
-- preferences: coding style, response style, tools they favor
-- summaries: takeaways from a long conversation worth keeping (rare)
+Each "content" must be a self-contained, third-person statement that makes sense without the transcript. Always name the subject (e.g. "The user ..."), never use pronouns like "he/they/it" referring to transcript context.
 
-Do NOT extract:
-- Transient state (the current question, what they are doing right now)
-- PII the user did not explicitly share (emails/phones/addresses)
-- Passwords, API keys, tokens, sensitive credentials
-- Temporary context (weather, file paths, session-specific details)
+DO record (only when clearly stated, not guessed):
+- fact: stable identity or context — e.g. "The user is a backend engineer working mainly in C# and .NET.", "The user maintains an internal chat app called AIChat."
+- preference: enduring style/tooling choices — e.g. "The user prefers concise answers without pleasantries.", "The user wants code comments written in English."
 
-Use existing memories only to prevent duplicates and identify real updates:
-- Do not output a memory if it already exists with the same meaning.
-- If the transcript corrects or materially refines an existing memory, return the updated content and set existingMemoryId to that memory's id.
-- For brand-new memories, set existingMemoryId to null or omit it.
+DO NOT record:
+- The current task or question — e.g. "The user is debugging the ExtractionWorker class."
+- Transient states or feelings — e.g. "The user is tired today.", "The user is in a hurry."
+- Conversation-internal details — file paths, variable names, this session's code under discussion.
+- Pleasantries, acknowledgements, or chit-chat — e.g. "The user said thanks."
+- Anything speculative or inferred that the user did not actually state.
+- PII the user did not explicitly volunteer (emails, phone numbers, addresses).
+- Secrets — passwords, API keys, tokens, credentials.
 
-If nothing is worth remembering, return {"memories": []}. Empty is a valid, correct answer.
-Return ONLY the JSON object, no commentary or code fences.
+"summary" is rarely appropriate. Use it ONLY to capture a long-term project/background spanning the whole conversation that a plain fact cannot express. If unsure, do not produce a summary.
+
+Use the existing memories only to avoid duplicates and to update outdated ones:
+- If an equivalent memory already exists, do not output it again.
+- If the transcript clearly corrects or refines an existing memory, output the improved content and set existingMemoryId to that memory's id.
+- For genuinely new information, set existingMemoryId to null or omit it.
+
+If nothing qualifies, return {"memories": []}. Return ONLY the JSON object, no commentary or code fences.
 """;
 
         return new List<OpenAI.Chat.ChatMessage>
