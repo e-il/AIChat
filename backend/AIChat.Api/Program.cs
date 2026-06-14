@@ -27,7 +27,13 @@ builder.Services.AddControllers().AddJsonOptions(options =>
         new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
 });
 builder.Services.AddOpenApi();
-builder.Services.AddSignalR().AddJsonProtocol(options =>
+builder.Services.AddSignalR(options =>
+{
+    // The client sends the full conversation history on each SendMessage, which easily
+    // exceeds SignalR's 32 KB default for long, code-heavy chats. Raising the cap avoids
+    // the server closing the WebSocket mid-turn ("Connection closed with an error").
+    options.MaximumReceiveMessageSize = 10 * 1024 * 1024; // 10 MB
+}).AddJsonProtocol(options =>
 {
     options.PayloadSerializerOptions.Converters.Add(
         new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
