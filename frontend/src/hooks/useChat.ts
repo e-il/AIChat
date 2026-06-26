@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import * as signalR from '@microsoft/signalr';
-import type { Memory, Message, MessageAttachment } from '../types';
+import type { Memory, Message, MessageAttachment, MessageToolCall } from '../types';
 import { getAuthCode } from '../services/auth';
 import { DEFAULT_PROMPT_PROFILE_ID } from '../services/promptProfiles';
 
@@ -9,6 +9,7 @@ export interface StreamCompletePayload {
   content: string;
   usedMemories: Memory[];
   attachments: MessageAttachment[];
+  toolCalls: MessageToolCall[];
 }
 
 export function useChat() {
@@ -43,6 +44,7 @@ export function useChat() {
     const accumulated: string[] = [];
     let usedMemories: Memory[] = [];
     const attachments: MessageAttachment[] = [];
+    let toolCalls: MessageToolCall[] = [];
 
     const connection = new signalR.HubConnectionBuilder()
       .withUrl('/chathub', { accessTokenFactory: () => authCode })
@@ -59,7 +61,7 @@ export function useChat() {
 
     // The model invoked a tool — show "Generating image…" while we wait for the result.
     connection.on('ToolCallStart', (_convId: string, toolName: string) => {
-      setToolStatus(toolName);
+      setToolStatus(toolName === 'edit_image' ? 'generate_image' : toolName);
     });
 
     // Tool produced an attachment (e.g. generated image). Surface it live so the
@@ -70,16 +72,18 @@ export function useChat() {
       setToolStatus(null);
     });
 
-    connection.on('StreamComplete', (convId: string) => {
+    connection.on('StreamComplete', (convId: string, completedToolCalls: MessageToolCall[] = []) => {
       setIsStreaming(false);
       setStreamingContent('');
       setStreamingAttachments([]);
       setToolStatus(null);
+      toolCalls = completedToolCalls;
       onStreamCompleteRef.current?.({
         conversationId: convId,
         content: accumulated.join(''),
         usedMemories,
         attachments,
+        toolCalls,
       });
       connection.stop().catch(err => console.error('Error stopping connection:', err));
     });

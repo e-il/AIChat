@@ -17,8 +17,10 @@ namespace AIChat.Api.Services;
 public class AzureOpenAIService : IAzureOpenAIService
 {
     private const string ImageFetchHttpClient = "azure-openai-image-fetch";
+    private const string ImageEditApiVersion = "2025-04-01-preview";
     private const int MaxExtractionExistingMemoryChars = 4000;
     private const string GenerateImageToolName = "generate_image";
+    private const string EditImageToolName = "edit_image";
     private const string GenerateVideoToolName = "generate_video";
 
     private readonly AzureOpenAIClient _client;
@@ -141,7 +143,11 @@ public class AzureOpenAIService : IAzureOpenAIService
         var videoToolEnabled = allowVideoGeneration && IsVideoGenerationAvailable;
 
         var pass1Options = new ChatCompletionOptions();
-        if (imageToolEnabled) pass1Options.Tools.Add(BuildImageTool());
+        if (imageToolEnabled)
+        {
+            pass1Options.Tools.Add(BuildImageTool());
+            pass1Options.Tools.Add(BuildEditImageTool());
+        }
         if (videoToolEnabled) pass1Options.Tools.Add(BuildVideoTool());
 
         // ----- Pass 1 -----
@@ -179,11 +185,12 @@ public class AzureOpenAIService : IAzureOpenAIService
         var attachments = new List<MessageAttachment>();
         foreach (var tc in toolCalls)
         {
-            yield return new ToolCallStart(tc.FunctionName, tc.Id);
+            yield return new ToolCallStart(tc.FunctionName, tc.Id, ToolCallArgumentsToJson(tc.FunctionArguments));
 
             var (attachment, errorJson) = tc.FunctionName switch
             {
                 GenerateImageToolName => await TryExecuteImageToolAsync(userId, tc, cancellationToken),
+                EditImageToolName => await TryExecuteImageEditToolAsync(userId, truncated, tc, cancellationToken),
                 GenerateVideoToolName => await TryExecuteVideoToolAsync(userId, tc, cancellationToken),
                 _ => (null, """{"status":"error","message":"unknown tool"}"""),
             };
@@ -258,6 +265,34 @@ public class AzureOpenAIService : IAzureOpenAIService
         }
     }
 
+    private async Task<(MessageAttachment? Attachment, string? ErrorJson)> TryExecuteImageEditToolAsync(
+        string userId, List<AppChatMessage> messages, ChatToolCall tc, CancellationToken ct)
+    {
+        try
+        {
+            var args = ParseToolCallArgs<ImageEditToolCallArgs>(tc.FunctionArguments);
+            if (string.IsNullOrWhiteSpace(args.Prompt))
+            {
+                return (null, """{"status":"error","message":"prompt is required"}""");
+            }
+
+            var source = FindGeneratedImageAttachment(messages, args.SourceImageId);
+            if (source is null)
+            {
+                return (null, """{"status":"error","message":"no generated image is available to edit"}""");
+            }
+
+            var attachment = await EditImageAsync(userId, args.Prompt, source, args.Size, ct);
+            return (attachment, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "edit_image tool execution failed");
+            var safeMsg = JsonEncodedText.Encode(ex.Message).ToString();
+            return (null, $$"""{"status":"error","message":"{{safeMsg}}"}""");
+        }
+    }
+
     private async Task<(MessageAttachment? Attachment, string? ErrorJson)> TryExecuteVideoToolAsync(
         string userId, ChatToolCall tc, CancellationToken ct)
     {
@@ -268,7 +303,7 @@ public class AzureOpenAIService : IAzureOpenAIService
             {
                 return (null, """{"status":"error","message":"prompt is required"}""");
             }
-            var attachment = await GenerateVideoAsync(userId, args.Prompt, args.Size, args.DurationSeconds, ct);
+            var attachment = await GenerateVideoAsync(userId, args.Prompt, args.Size, args.DurationSeconds, args.RemixVideoId, ct);
             return (attachment, null);
         }
         catch (Exception ex)
@@ -292,6 +327,13 @@ public class AzureOpenAIService : IAzureOpenAIService
         }
     }
 
+    private static string ToolCallArgumentsToJson(BinaryData argumentsJson)
+    {
+        if (argumentsJson is null) return "{}";
+        var json = Encoding.UTF8.GetString(argumentsJson.ToMemory().Span);
+        return string.IsNullOrWhiteSpace(json) ? "{}" : json;
+    }
+
     private static string BuildMediaOkResultJson(MessageAttachment a) =>
         JsonSerializer.Serialize(new
         {
@@ -303,6 +345,7 @@ public class AzureOpenAIService : IAzureOpenAIService
             width = a.Width,
             height = a.Height,
             durationSeconds = a.DurationSeconds,
+            providerMediaId = a.ProviderMediaId,
             note = "Media saved and shown to the user. Briefly describe what you generated; do not include the URL.",
         });
 
@@ -342,6 +385,36 @@ public class AzureOpenAIService : IAzureOpenAIService
             functionParameters: BinaryData.FromString(schema));
     }
 
+        private static ChatTool BuildEditImageTool()
+        {
+                const string schema = """
+                {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "Detailed English edit instruction. Preserve all unchanged parts of the source image as much as possible."
+                        },
+                        "source_image_id": {
+                            "type": "string",
+                            "description": "Attachment id of the generated image to edit. Omit this to edit the most recent generated image."
+                        },
+                        "size": {
+                            "type": "string",
+                            "enum": ["1024x1024", "1792x1024", "1024x1792"],
+                            "description": "Output image dimensions. Use the source image dimensions unless the user asks to resize."
+                        }
+                    },
+                    "required": ["prompt"]
+                }
+                """;
+
+                return ChatTool.CreateFunctionTool(
+                        functionName: EditImageToolName,
+                        functionDescription: "Edits an existing generated image and returns a new image. Use this instead of generate_image when the user asks to modify, recolor, remove, add, or otherwise change the previous image while preserving the rest.",
+                        functionParameters: BinaryData.FromString(schema));
+        }
+
         private static ChatTool BuildVideoTool()
         {
                 const string schema = """
@@ -361,6 +434,10 @@ public class AzureOpenAIService : IAzureOpenAIService
                             "type": "integer",
                             "enum": [4, 8, 12],
                             "description": "Video duration in seconds. Use 4 unless the user asks for a longer clip."
+                        },
+                        "remix_video_id": {
+                            "type": "string",
+                            "description": "Azure Sora video id (for example video_...) of a previous generated video to remix. Use this for follow-up edits to an earlier video when available."
                         }
                     },
                     "required": ["prompt"]
@@ -586,6 +663,7 @@ public class AzureOpenAIService : IAzureOpenAIService
     private static string BuildVideoReferenceText(MessageAttachment att, string? caption)
     {
         var details = new List<string> { $"videoId={att.Id}" };
+        if (!string.IsNullOrWhiteSpace(att.ProviderMediaId)) details.Add($"remix_video_id={att.ProviderMediaId}");
         if (!string.IsNullOrWhiteSpace(att.Prompt)) details.Add($"prompt={att.Prompt}");
         if (att.Width is not null && att.Height is not null) details.Add($"size={att.Width}x{att.Height}");
         if (att.DurationSeconds is not null) details.Add($"durationSeconds={att.DurationSeconds}");
@@ -598,10 +676,12 @@ public class AzureOpenAIService : IAzureOpenAIService
 
     private static bool IsMediaToolName(string? toolName) =>
         string.Equals(toolName, GenerateImageToolName, StringComparison.Ordinal)
+        || string.Equals(toolName, EditImageToolName, StringComparison.Ordinal)
         || string.Equals(toolName, GenerateVideoToolName, StringComparison.Ordinal);
 
     private static bool IsGeneratedImage(MessageToolCall toolCall, MessageAttachment attachment) =>
-        string.Equals(toolCall.Name, GenerateImageToolName, StringComparison.Ordinal)
+        (string.Equals(toolCall.Name, GenerateImageToolName, StringComparison.Ordinal)
+            || string.Equals(toolCall.Name, EditImageToolName, StringComparison.Ordinal))
         && string.Equals(attachment.Type, "image", StringComparison.Ordinal);
 
     private static bool IsGeneratedVideo(MessageToolCall toolCall, MessageAttachment attachment) =>
@@ -610,6 +690,33 @@ public class AzureOpenAIService : IAzureOpenAIService
 
     private static bool IsGeneratedMedia(MessageToolCall toolCall, MessageAttachment attachment) =>
         IsGeneratedImage(toolCall, attachment) || IsGeneratedVideo(toolCall, attachment);
+
+    private static MessageAttachment? FindGeneratedImageAttachment(List<AppChatMessage> messages, string? sourceImageId)
+    {
+        MessageAttachment? latest = null;
+        foreach (var m in messages)
+        {
+            if (m.Role != "assistant"
+                || m.ToolCalls is not { Count: > 0 } tcs
+                || m.Attachments is not { Count: > 0 } atts)
+            {
+                continue;
+            }
+
+            for (var i = 0; i < tcs.Count && i < atts.Count; i++)
+            {
+                if (!IsGeneratedImage(tcs[i], atts[i])) continue;
+                if (!string.IsNullOrWhiteSpace(sourceImageId)
+                    && string.Equals(atts[i].Id, sourceImageId, StringComparison.Ordinal))
+                {
+                    return atts[i];
+                }
+                latest = atts[i];
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(sourceImageId) ? latest : null;
+    }
 
     /// <summary>
     /// Tool-result JSON for replayed generated media: the original prompt plus the saved
@@ -630,6 +737,7 @@ public class AzureOpenAIService : IAzureOpenAIService
             width = a.Width,
             height = a.Height,
             durationSeconds = a.DurationSeconds,
+            providerMediaId = a.ProviderMediaId,
             caption = string.IsNullOrWhiteSpace(caption) ? null : caption,
         });
     }
@@ -753,10 +861,11 @@ public class AzureOpenAIService : IAzureOpenAIService
         var options = new ImageGenerationOptions
         {
             Size = parsedSize,
+            Quality = GetImageQuality(prompt),
         };
 
-        _logger.LogInformation("Generating image for user {UserId}, prompt length={Len}, size={Size}",
-            userId, prompt.Length, $"{w}x{h}");
+        _logger.LogInformation("Generating image for user {UserId}, prompt length={Len}, size={Size}, quality={Quality}",
+            userId, prompt.Length, $"{w}x{h}", GetImageQualityValue(prompt));
 
         // Image generation can take 20-60s typically; cap at 2 min so a hung Azure
         // request doesn't block the chat indefinitely. The cancellation propagates
@@ -792,11 +901,175 @@ public class AzureOpenAIService : IAzureOpenAIService
             cancellationToken: cancellationToken);
     }
 
+    public async Task<MessageAttachment> EditImageAsync(
+        string userId,
+        string prompt,
+        MessageAttachment sourceImage,
+        string? size = null,
+        CancellationToken cancellationToken = default)
+    {
+        var model = GetImageGenerationModel()
+            ?? throw new InvalidOperationException("Image editing is not configured");
+        if (!_settings.EnableImageGeneration)
+        {
+            throw new InvalidOperationException("Image generation is disabled");
+        }
+
+        var filename = ExtractFilename(sourceImage.Url)
+            ?? throw new InvalidOperationException("Source image URL is invalid");
+        var read = await _mediaStorage.TryReadAsync(userId, filename, cancellationToken)
+            ?? throw new InvalidOperationException("Source image is not available");
+        if (!IsSupportedImageEditMimeType(read.MimeType))
+        {
+            throw new InvalidOperationException($"Image edit source must be PNG or JPEG, got {read.MimeType}");
+        }
+
+        var editSizeText = size ?? (sourceImage.Width is not null && sourceImage.Height is not null
+            ? $"{sourceImage.Width}x{sourceImage.Height}"
+            : null);
+        var (_, w, h) = ParseImageSize(editSizeText);
+
+        _logger.LogInformation("Editing image for user {UserId}, source={SourceImageId}, prompt length={Len}, size={Size}",
+            userId, sourceImage.Id, prompt.Length, $"{w}x{h}");
+
+        using var imgCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        imgCts.CancelAfter(TimeSpan.FromMinutes(10));
+
+        var (bytes, revisedPrompt) = await EditImageViaRestAsync(
+            model.DeploymentName,
+            prompt,
+            filename,
+            read.Bytes,
+            read.MimeType,
+            $"{w}x{h}",
+            imgCts.Token);
+
+        return await _mediaStorage.SaveAsync(
+            userId,
+            bytes,
+            mimeType: "image/png",
+            prompt: prompt,
+            revisedPrompt: revisedPrompt,
+            width: w,
+            height: h,
+            cancellationToken: cancellationToken);
+    }
+
+    private async Task<(ReadOnlyMemory<byte> Bytes, string? RevisedPrompt)> EditImageViaRestAsync(
+        string deploymentName,
+        string prompt,
+        string filename,
+        ReadOnlyMemory<byte> imageBytes,
+        string mimeType,
+        string size,
+        CancellationToken cancellationToken)
+    {
+        var http = _httpClientFactory.CreateClient(ImageFetchHttpClient);
+        var url = $"{_settings.Endpoint.TrimEnd('/')}/openai/deployments/{Uri.EscapeDataString(deploymentName)}/images/edits?api-version={ImageEditApiVersion}";
+        var startedAt = DateTime.UtcNow;
+        try
+        {
+            using var request = BuildImageEditRequest(url, prompt, filename, imageBytes, mimeType, size);
+            using var response = await http.SendAsync(request, cancellationToken);
+            var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                return ParseImageEditResponse(responseText);
+            }
+
+            throw new InvalidOperationException($"Image edit failed after {(DateTime.UtcNow - startedAt).TotalMilliseconds}ms: {(int)response.StatusCode} {responseText}");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new InvalidOperationException($"Image edit failed before response after {(DateTime.UtcNow - startedAt).TotalMilliseconds}ms", ex);
+        }
+    }
+
+    private HttpRequestMessage BuildImageEditRequest(
+        string url,
+        string prompt,
+        string filename,
+        ReadOnlyMemory<byte> imageBytes,
+        string mimeType,
+        string size)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Add("api-key", _settings.ApiKey);
+
+        var form = new MultipartFormDataContent();
+        form.Add(new StringContent(prompt), "prompt");
+        form.Add(new StringContent(size), "size");
+        form.Add(new StringContent(GetImageQualityValue(prompt)), "quality");
+        form.Add(new StringContent("png"), "output_format");
+        form.Add(new StringContent("1"), "n");
+
+        var imageContent = new ByteArrayContent(imageBytes.ToArray());
+        imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mimeType);
+        form.Add(imageContent, "image", filename);
+        request.Content = form;
+        return request;
+    }
+
+    private static (ReadOnlyMemory<byte> Bytes, string? RevisedPrompt) ParseImageEditResponse(string responseText)
+    {
+        using var doc = JsonDocument.Parse(responseText);
+        var item = doc.RootElement.GetProperty("data")[0];
+        var b64 = item.TryGetProperty("b64_json", out var b64Element) ? b64Element.GetString() : null;
+        if (string.IsNullOrWhiteSpace(b64))
+        {
+            throw new InvalidOperationException("Image edit response did not include b64_json");
+        }
+
+        var revisedPrompt = item.TryGetProperty("revised_prompt", out var revisedPromptElement)
+            ? revisedPromptElement.GetString()
+            : null;
+        return (Convert.FromBase64String(b64), revisedPrompt);
+    }
+
+    private ModelInfo? GetImageGenerationModel() =>
+        string.IsNullOrWhiteSpace(_settings.ImageGenerationModelId)
+            ? null
+            : _settings.Models.FirstOrDefault(m => m.Id == _settings.ImageGenerationModelId);
+
+    private static bool IsSupportedImageEditMimeType(string mimeType) =>
+        string.Equals(mimeType, "image/png", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(mimeType, "image/jpeg", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(mimeType, "image/jpg", StringComparison.OrdinalIgnoreCase);
+
+    private static GeneratedImageQuality GetImageQuality(string prompt) =>
+        new(GetImageQualityValue(prompt));
+
+    private static string GetImageQualityValue(string prompt) =>
+        LooksLikePersonImage(prompt) ? "high" : "medium";
+
+    private static bool LooksLikePersonImage(string prompt)
+    {
+        var text = prompt.ToLowerInvariant();
+        return text.Contains("person")
+            || text.Contains("people")
+            || text.Contains("portrait")
+            || text.Contains("face")
+            || text.Contains("human")
+            || text.Contains("man")
+            || text.Contains("woman")
+            || text.Contains("boy")
+            || text.Contains("girl")
+            || text.Contains("人物")
+            || text.Contains("人像")
+            || text.Contains("肖像")
+            || text.Contains("脸")
+            || text.Contains("男人")
+            || text.Contains("女人")
+            || text.Contains("男孩")
+            || text.Contains("女孩");
+    }
+
     public async Task<MessageAttachment> GenerateVideoAsync(
         string userId,
         string prompt,
         string? size = null,
         int? durationSeconds = null,
+        string? remixVideoId = null,
         CancellationToken cancellationToken = default)
     {
         var model = _videoGenerationModel.Value
@@ -818,6 +1091,7 @@ public class AzureOpenAIService : IAzureOpenAIService
             width,
             height,
             duration,
+            remixVideoId,
             cancellationToken);
 
         return await _mediaStorage.SaveAsync(
@@ -828,6 +1102,7 @@ public class AzureOpenAIService : IAzureOpenAIService
             width: width,
             height: height,
             durationSeconds: duration,
+            providerMediaId: video.ProviderVideoId,
             attachmentType: "video",
             cancellationToken: cancellationToken);
     }
@@ -849,6 +1124,18 @@ public class AzureOpenAIService : IAzureOpenAIService
         public string? Size { get; init; }
     }
 
+    private readonly record struct ImageEditToolCallArgs
+    {
+        [JsonPropertyName("prompt")]
+        public string Prompt { get; init; }
+
+        [JsonPropertyName("source_image_id")]
+        public string? SourceImageId { get; init; }
+
+        [JsonPropertyName("size")]
+        public string? Size { get; init; }
+    }
+
     private readonly record struct VideoToolCallArgs
     {
         [JsonPropertyName("prompt")]
@@ -859,6 +1146,9 @@ public class AzureOpenAIService : IAzureOpenAIService
 
         [JsonPropertyName("duration_seconds")]
         public int? DurationSeconds { get; init; }
+
+        [JsonPropertyName("remix_video_id")]
+        public string? RemixVideoId { get; init; }
     }
 
     private static (GeneratedImageSize Size, int Width, int Height) ParseImageSize(string? size)

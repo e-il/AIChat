@@ -24,6 +24,7 @@ export interface MessageAttachment {
   width?: number;
   height?: number;
   durationSeconds?: number;
+  providerMediaId?: string;
 }
 
 export interface MessageToolCall {

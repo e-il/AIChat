@@ -19,9 +19,13 @@ public static class AzureOpenAIServiceCollectionExtensions
             if (!string.IsNullOrEmpty(envApiKey)) settings.ApiKey = envApiKey;
         });
 
-        // Used by AzureOpenAIService to fetch image URLs as a defensive fallback when
-        // a deployment ignores ResponseFormat=Bytes.
+        // Used by AzureOpenAIService for image URL fallback fetches and long-running
+        // image edit REST calls.
         services.AddHttpClient();
+        services.AddHttpClient("azure-openai-image-fetch", client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(10);
+        });
         services.AddSingleton<IMediaStorageService, MediaStorageService>();
         services.AddSingleton<IVideoGenerationService, AzureOpenAIVideoGenerationService>();
         services.AddSingleton<IAzureOpenAIService, AzureOpenAIService>();

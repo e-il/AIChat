@@ -53,6 +53,13 @@ public interface IAzureOpenAIService
         string? size = null,
         CancellationToken cancellationToken = default);
 
+    Task<MessageAttachment> EditImageAsync(
+        string userId,
+        string prompt,
+        MessageAttachment sourceImage,
+        string? size = null,
+        CancellationToken cancellationToken = default);
+
     /// <summary>True if a usable image-generation deployment is configured and enabled.</summary>
     bool IsImageGenerationAvailable { get; }
 
@@ -67,6 +74,7 @@ public interface IAzureOpenAIService
         string prompt,
         string? size = null,
         int? durationSeconds = null,
+        string? remixVideoId = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>True if a usable video-generation deployment is configured and enabled.</summary>

@@ -25,6 +25,7 @@ public class MessageAttachment
     public int? Width { get; set; }
     public int? Height { get; set; }
     public int? DurationSeconds { get; set; }
+    public string? ProviderMediaId { get; set; }
 }
 
 public class MessageToolCall

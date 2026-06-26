@@ -157,7 +157,7 @@ function App() {
 
   // Wire up SignalR callbacks
   useEffect(() => {
-    setOnStreamComplete(({ conversationId, content, usedMemories, attachments }) => {
+    setOnStreamComplete(({ conversationId, content, usedMemories, attachments, toolCalls }) => {
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
@@ -165,6 +165,7 @@ function App() {
         timestamp: new Date().toISOString(),
         usedMemories: usedMemories.length > 0 ? usedMemories : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       };
       addMessage(conversationId, assistantMessage);
     });

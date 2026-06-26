@@ -11,8 +11,8 @@ public abstract record StreamEvent;
 /// <summary>Incremental text from the chat model. Concatenated across both passes.</summary>
 public sealed record TextDelta(string Text) : StreamEvent;
 
-/// <summary>The model invoked a tool. Frontend uses this to show "Generating image…".</summary>
-public sealed record ToolCallStart(string ToolName, string ToolCallId) : StreamEvent;
+/// <summary>The model invoked a tool. Frontend uses this to show generation status.</summary>
+public sealed record ToolCallStart(string ToolName, string ToolCallId, string ArgumentsJson) : StreamEvent;
 
 /// <summary>An attachment is ready to display (e.g. a generated image saved to storage).</summary>
 public sealed record AttachmentReady(MessageAttachment Attachment, string ToolCallId) : StreamEvent;

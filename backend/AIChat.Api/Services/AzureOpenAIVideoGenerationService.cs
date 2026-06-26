@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Net.Http.Headers;
 using Microsoft.Extensions.Options;
 using AIChat.Api.Models;
 
@@ -29,23 +30,29 @@ public class AzureOpenAIVideoGenerationService : IVideoGenerationService
         int width,
         int height,
         int durationSeconds,
+        string? remixVideoId = null,
         CancellationToken cancellationToken = default)
     {
         using var videoCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         videoCts.CancelAfter(TimeSpan.FromMinutes(10));
 
         var http = _httpClientFactory.CreateClient(HttpClientName);
-        var createUrl = BuildVideoApiUrl("videos");
-        var body = new
+        var createUrl = string.IsNullOrWhiteSpace(remixVideoId)
+            ? BuildVideoApiUrl("videos")
+            : BuildVideoApiUrl($"videos/{Uri.EscapeDataString(remixVideoId)}/remix");
+        var body = new Dictionary<string, string>
         {
-            model = deploymentName,
-            prompt,
-            size = $"{width}x{height}",
-            seconds = durationSeconds.ToString(),
+            ["prompt"] = prompt,
         };
+        if (string.IsNullOrWhiteSpace(remixVideoId))
+        {
+            body["model"] = deploymentName;
+            body["size"] = $"{width}x{height}";
+            body["seconds"] = durationSeconds.ToString();
+        }
 
         using var createRequest = CreateVideoRequest(HttpMethod.Post, createUrl);
-        createRequest.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        createRequest.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, new MediaTypeHeaderValue("application/json"));
         using var createResponse = await http.SendAsync(createRequest, videoCts.Token);
         var createJson = await ReadSuccessfulResponseAsync(createResponse, "create video generation job", videoCts.Token);
         using var createDoc = JsonDocument.Parse(createJson);
@@ -66,7 +73,7 @@ public class AzureOpenAIVideoGenerationService : IVideoGenerationService
         }
 
         var bytes = await downloadResponse.Content.ReadAsByteArrayAsync(videoCts.Token);
-        return new GeneratedVideo(bytes, "video/mp4");
+        return new GeneratedVideo(bytes, "video/mp4", videoId);
     }
 
     private async Task WaitForVideoGenerationAsync(HttpClient http, string videoId, CancellationToken ct)

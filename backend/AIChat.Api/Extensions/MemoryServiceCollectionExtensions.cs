@@ -19,6 +19,7 @@ public static class MemoryServiceCollectionExtensions
         services.AddUserJsonStore<Dictionary<string, PendingExtraction>>("pending");
 
         services.AddSingleton<IMemoryService, MemoryService>();
+        services.AddSingleton<IMemorySuppressionPolicy, MemorySuppressionPolicy>();
         services.AddSingleton<IExtractionCheckpointService, ExtractionCheckpointService>();
         // ExtractionQueue has two surfaces pointing at the same singleton: IExtractionQueue
         // (enqueue-only, injected into ChatHub) and the concrete type (full access to

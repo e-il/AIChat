@@ -37,6 +37,7 @@ public class MediaStorageService : IMediaStorageService
         int? width = null,
         int? height = null,
         int? durationSeconds = null,
+        string? providerMediaId = null,
         string attachmentType = "image",
         CancellationToken cancellationToken = default)
     {
@@ -67,6 +68,7 @@ public class MediaStorageService : IMediaStorageService
             Width = width,
             Height = height,
             DurationSeconds = durationSeconds,
+            ProviderMediaId = providerMediaId,
         };
     }
 

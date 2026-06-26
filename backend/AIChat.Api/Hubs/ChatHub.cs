@@ -14,6 +14,7 @@ public class ChatHub : Hub
     private readonly IUserIdentityService _identity;
     private readonly IMemoryService _memory;
     private readonly IdleExtractionScheduler _extractionScheduler;
+    private readonly IMemorySuppressionPolicy _memorySuppression;
     private readonly IPromptProfileRegistry _promptProfiles;
     private readonly AzureOpenAISettings _azureOpenAISettings;
     private readonly ILogger<ChatHub> _logger;
@@ -23,6 +24,7 @@ public class ChatHub : Hub
         IUserIdentityService identity,
         IMemoryService memory,
         IdleExtractionScheduler extractionScheduler,
+        IMemorySuppressionPolicy memorySuppression,
         IPromptProfileRegistry promptProfiles,
         IOptions<AzureOpenAISettings> azureOpenAISettings,
         ILogger<ChatHub> logger)
@@ -31,6 +33,7 @@ public class ChatHub : Hub
         _identity = identity;
         _memory = memory;
         _extractionScheduler = extractionScheduler;
+        _memorySuppression = memorySuppression;
         _promptProfiles = promptProfiles;
         _azureOpenAISettings = azureOpenAISettings.Value;
         _logger = logger;
@@ -123,8 +126,19 @@ public class ChatHub : Hub
                 return;
             }
 
-            // Resolve memory based on mode and inject into system prompt
-            var memories = await ResolveMemoriesAsync(userId, lastMessage.Content, memoryMode, explicitMemoryIds);
+            var suppressMemory = _memorySuppression.ShouldSuppress(request.PromptProfileId, messages);
+            if (suppressMemory)
+            {
+                _logger.LogInformation(
+                    "Memory disabled for conversation {ConversationId}: promptProfileId={PromptProfileId}",
+                    conversationId,
+                    request.PromptProfileId);
+            }
+
+            // Resolve memory based on mode and inject into system prompt.
+            var memories = suppressMemory
+                ? new List<Memory>()
+                : await ResolveMemoriesAsync(userId, lastMessage.Content, memoryMode, explicitMemoryIds);
             var messagesToSend = messages;
             if (memories.Count > 0 || !isDefaultGeneralPrompt)
             {
@@ -140,6 +154,8 @@ public class ChatHub : Hub
 
             var allowImageGen = _azureOpenAISettings.EnableImageGeneration;
             var allowVideoGen = _azureOpenAISettings.EnableVideoGeneration;
+            var generatedMediaThisTurn = false;
+            var toolCalls = new List<MessageToolCall>();
             await foreach (var ev in _openAIService.StreamChatCompletionAsync(
                 userId, messagesToSend, modelId, maxContextSize, maxMessages, allowImageGen, allowVideoGen))
             {
@@ -149,9 +165,16 @@ public class ChatHub : Hub
                         await Clients.Caller.SendAsync("ReceiveMessageChunk", conversationId, td.Text);
                         break;
                     case ToolCallStart tcs:
+                        toolCalls.Add(new MessageToolCall
+                        {
+                            Id = tcs.ToolCallId,
+                            Name = tcs.ToolName,
+                            ArgumentsJson = tcs.ArgumentsJson,
+                        });
                         await Clients.Caller.SendAsync("ToolCallStart", conversationId, tcs.ToolName, tcs.ToolCallId);
                         break;
                     case AttachmentReady ar:
+                        generatedMediaThisTurn |= IsMediaAttachment(ar.Attachment);
                         await Clients.Caller.SendAsync("AttachmentReady", conversationId, ar.Attachment, ar.ToolCallId);
                         break;
                 }
@@ -163,12 +186,24 @@ public class ChatHub : Hub
             }
 
             _logger.LogInformation("Stream complete for conversation {ConversationId}", conversationId);
-            await Clients.Caller.SendAsync("StreamComplete", conversationId);
+            await Clients.Caller.SendAsync("StreamComplete", conversationId, toolCalls);
 
             // Stage the latest snapshot and (re)start the idle timer. A new turn within the
             // idle window cancels it; otherwise extraction runs once the conversation goes quiet.
             // messages is the client-sent list (without our injected system prompt).
-            await _extractionScheduler.ScheduleAsync(userId, conversationId, messages);
+            if (!suppressMemory && !generatedMediaThisTurn)
+            {
+                await _extractionScheduler.ScheduleAsync(userId, conversationId, messages);
+            }
+            else
+            {
+                await _extractionScheduler.CancelAsync(userId, conversationId, messages[^1].Id);
+                _logger.LogInformation(
+                    "Idle extraction skipped for conversation {ConversationId}: suppressMemory={SuppressMemory}, generatedMediaThisTurn={GeneratedMediaThisTurn}",
+                    conversationId,
+                        suppressMemory,
+                    generatedMediaThisTurn);
+            }
         }
         catch (Exception ex)
         {
@@ -226,4 +261,8 @@ public class ChatHub : Hub
         prepended.AddRange(messages);
         return prepended;
     }
+
+    private static bool IsMediaAttachment(MessageAttachment attachment) =>
+        string.Equals(attachment.Type, "image", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(attachment.Type, "video", StringComparison.OrdinalIgnoreCase);
 }

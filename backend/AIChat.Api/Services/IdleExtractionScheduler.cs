@@ -53,6 +53,27 @@ public class IdleExtractionScheduler
         StartTimer(userId, conversationId, IdleDelay);
     }
 
+    public async Task CancelAsync(string userId, string conversationId, string? advanceCheckpointToMessageId = null)
+    {
+        var key = Key(userId, conversationId);
+        if (_timers.TryRemove(key, out var cts))
+        {
+            try { cts.Cancel(); } catch (ObjectDisposedException) { }
+            cts.Dispose();
+        }
+
+        await _store.RemoveAsync(userId, conversationId);
+        if (!string.IsNullOrWhiteSpace(advanceCheckpointToMessageId))
+        {
+            await _checkpoint.SetAsync(userId, conversationId, advanceCheckpointToMessageId);
+        }
+
+        _logger.LogInformation(
+            "Idle extraction cancelled for conversation {ConversationId}, checkpointAdvanced={CheckpointAdvanced}",
+            conversationId,
+            !string.IsNullOrWhiteSpace(advanceCheckpointToMessageId));
+    }
+
     /// <summary>
     /// Reload persisted pending conversations and reschedule their idle timers. Called once by
     /// <see cref="ExtractionWorker"/> on startup so a restart during an idle window isn't lost.
