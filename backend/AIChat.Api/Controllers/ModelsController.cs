@@ -18,7 +18,7 @@ public class ModelsController : ControllerBase
     [HttpGet]
     public ActionResult<ModelsResponse> GetModels()
     {
-        // Only Kind="chat" entries are user-selectable. Image and embedding models are invoked internally.
+        // Only Kind="chat" entries are user-selectable. Media and embedding models are invoked internally.
         var chatModels = _openAIService.GetAvailableModels()
             .Where(m => string.Equals(m.Kind, "chat", StringComparison.OrdinalIgnoreCase))
             .ToList();

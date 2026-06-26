@@ -22,11 +22,12 @@ public class AuthCodeMiddleware
             return;
         }
 
-        // Public image serving: GET /api/images/{filename} is loaded by <img src=...> and
+        // Public media serving: GET /api/images/{filename}, /api/videos/{filename},
+        // or /api/media/{filename} is loaded by <img>/<video src=...> and
         // is left unauthenticated on purpose — filenames are unguessable 128-bit GUIDs.
-        // Only GETs are public; upload/generate POSTs under /api/images still require auth.
+        // Only GETs are public; upload/generate POSTs still require auth.
         if (HttpMethods.IsGet(context.Request.Method)
-            && context.Request.Path.StartsWithSegments("/api/images"))
+            && IsPublicMediaPath(context.Request.Path))
         {
             await _next(context);
             return;
@@ -46,6 +47,11 @@ public class AuthCodeMiddleware
         context.Items[UserIdItemKey] = userId;
         await _next(context);
     }
+
+    private static bool IsPublicMediaPath(PathString path) =>
+        path.StartsWithSegments("/api/images")
+        || path.StartsWithSegments("/api/videos")
+        || path.StartsWithSegments("/api/media");
 }
 
 public static class AuthCodeMiddlewareExtensions

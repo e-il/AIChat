@@ -3,7 +3,7 @@ using AIChat.Api.Models;
 
 namespace AIChat.Api.Services;
 
-public class ImageStorageService : IImageStorageService
+public class MediaStorageService : IMediaStorageService
 {
     private static readonly Regex SafeUserId = new(@"^[A-Za-z0-9_\-]+$", RegexOptions.Compiled);
     private static readonly Regex SafeFilename = new(@"^[A-Za-z0-9_\-]+\.[A-Za-z0-9]+$", RegexOptions.Compiled);
@@ -15,12 +15,13 @@ public class ImageStorageService : IImageStorageService
         ["image/jpg"] = "jpg",
         ["image/webp"] = "webp",
         ["image/gif"] = "gif",
+        ["video/mp4"] = "mp4",
     };
 
     private readonly string _root;
-    private readonly ILogger<ImageStorageService> _logger;
+    private readonly ILogger<MediaStorageService> _logger;
 
-    public ImageStorageService(ILogger<ImageStorageService> logger)
+    public MediaStorageService(ILogger<MediaStorageService> logger)
     {
         _logger = logger;
         _root = Path.Combine("data", "images");
@@ -35,12 +36,14 @@ public class ImageStorageService : IImageStorageService
         string? revisedPrompt = null,
         int? width = null,
         int? height = null,
+        int? durationSeconds = null,
+        string attachmentType = "image",
         CancellationToken cancellationToken = default)
     {
         ValidateUserId(userId);
         if (!MimeToExt.TryGetValue(mimeType, out var ext))
         {
-            throw new InvalidOperationException($"Unsupported image mime type: {mimeType}");
+            throw new InvalidOperationException($"Unsupported media mime type: {mimeType}");
         }
 
         var userDir = Path.Combine(_root, userId);
@@ -51,38 +54,39 @@ public class ImageStorageService : IImageStorageService
         var path = Path.Combine(userDir, filename);
 
         await File.WriteAllBytesAsync(path, bytes.ToArray(), cancellationToken);
-        _logger.LogInformation("Stored image {Filename} for user {UserId} ({Bytes} bytes)", filename, userId, bytes.Length);
+        _logger.LogInformation("Stored {AttachmentType} {Filename} for user {UserId} ({Bytes} bytes)", attachmentType, filename, userId, bytes.Length);
 
         return new MessageAttachment
         {
             Id = id,
-            Type = "image",
+            Type = attachmentType,
             MimeType = mimeType,
-            Url = $"/api/images/{filename}",
+            Url = $"{GetRoutePrefix(attachmentType)}/{filename}",
             Prompt = prompt,
             RevisedPrompt = revisedPrompt,
             Width = width,
             Height = height,
+            DurationSeconds = durationSeconds,
         };
     }
 
     public async Task SaveDescriptionAsync(
-        string userId, string imageId, string description, CancellationToken cancellationToken = default)
+        string userId, string mediaId, string description, CancellationToken cancellationToken = default)
     {
-        ValidateUserId(imageId); // imageId comes from us (Guid.NewGuid().ToString("N")) — same charset rule
+        ValidateUserId(mediaId);
         ValidateUserId(userId);
 
         var userDir = Path.Combine(_root, userId);
         Directory.CreateDirectory(userDir);
-        var path = Path.Combine(userDir, $"{imageId}.description.txt");
+        var path = Path.Combine(userDir, $"{mediaId}.description.txt");
         await File.WriteAllTextAsync(path, description, cancellationToken);
     }
 
     public async Task<string?> TryReadDescriptionAsync(
-        string userId, string imageId, CancellationToken cancellationToken = default)
+        string userId, string mediaId, CancellationToken cancellationToken = default)
     {
-        if (!SafeUserId.IsMatch(userId) || !SafeUserId.IsMatch(imageId)) return null;
-        var path = Path.Combine(_root, userId, $"{imageId}.description.txt");
+        if (!SafeUserId.IsMatch(userId) || !SafeUserId.IsMatch(mediaId)) return null;
+        var path = Path.Combine(_root, userId, $"{mediaId}.description.txt");
         var fullUserDir = Path.GetFullPath(Path.Combine(_root, userId));
         var fullPath = Path.GetFullPath(path);
         if (!fullPath.StartsWith(fullUserDir, StringComparison.OrdinalIgnoreCase)) return null;
@@ -141,14 +145,20 @@ public class ImageStorageService : IImageStorageService
             "jpg" or "jpeg" => "image/jpeg",
             "webp" => "image/webp",
             "gif" => "image/gif",
+            "mp4" => "video/mp4",
             _ => "application/octet-stream",
         };
+
+    private static string GetRoutePrefix(string attachmentType) =>
+        string.Equals(attachmentType, "video", StringComparison.OrdinalIgnoreCase)
+            ? "/api/videos"
+            : "/api/images";
 
     private static void ValidateUserId(string userId)
     {
         if (!SafeUserId.IsMatch(userId))
         {
-            throw new InvalidOperationException($"Invalid userId for image storage: {userId}");
+            throw new InvalidOperationException($"Invalid userId for media storage: {userId}");
         }
     }
 }

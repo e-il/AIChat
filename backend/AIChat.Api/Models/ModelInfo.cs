@@ -5,8 +5,8 @@ public class ModelInfo
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string DeploymentName { get; set; } = "";
-    // "chat" (default) | "image". Image models are not selectable from the chat dropdown;
-    // they are invoked by the chat model via the generate_image tool.
+    // "chat" (default) | "image" | "video". Media models are not selectable from the chat dropdown;
+    // they are invoked by the chat model via generation tools.
     public string Kind { get; set; } = "chat";
 }
 
@@ -25,4 +25,8 @@ public class AzureOpenAISettings
     public string? ImageGenerationModelId { get; set; }
     // Master switch. When false, the generate_image tool is not exposed even if a model is configured.
     public bool EnableImageGeneration { get; set; } = true;
+    // Id (matches Models[].Id) of the video-generation deployment. Empty disables video generation.
+    public string? VideoGenerationModelId { get; set; }
+    // Master switch. When false, the generate_video tool is not exposed even if a model is configured.
+    public bool EnableVideoGeneration { get; set; } = true;
 }

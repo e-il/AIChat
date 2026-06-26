@@ -13,8 +13,8 @@ public interface IAzureOpenAIService
     /// <summary>
     /// Streams a chat completion as a series of typed events (text deltas, tool calls,
     /// attachments). Handles two-pass tool calling internally: when the model invokes
-    /// generate_image, the service executes the tool and feeds the result back for a
-    /// natural-language wrap-up — all surfaced as additional TextDelta events.
+    /// generate_image or generate_video, the service executes the tool and feeds the
+    /// result back for a natural-language wrap-up — all surfaced as additional TextDelta events.
     /// </summary>
     IAsyncEnumerable<StreamEvent> StreamChatCompletionAsync(
         string userId,
@@ -23,6 +23,7 @@ public interface IAzureOpenAIService
         int maxContextSize,
         int maxMessages,
         bool allowImageGeneration,
+        bool allowVideoGeneration,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -42,7 +43,7 @@ public interface IAzureOpenAIService
 
     /// <summary>
     /// Generates an image for the given prompt using the configured image deployment,
-    /// persists the bytes via IImageStorageService for the given user, and returns the
+    /// persists the bytes via IMediaStorageService for the given user, and returns the
     /// resulting attachment (with a server-relative URL). Throws if image generation
     /// is disabled or unconfigured.
     /// </summary>
@@ -54,4 +55,20 @@ public interface IAzureOpenAIService
 
     /// <summary>True if a usable image-generation deployment is configured and enabled.</summary>
     bool IsImageGenerationAvailable { get; }
+
+    /// <summary>
+    /// Generates a video for the given prompt using the configured video deployment,
+    /// persists the bytes via IMediaStorageService for the given user, and returns the
+    /// resulting attachment (with a server-relative URL). Throws if video generation
+    /// is disabled or unconfigured.
+    /// </summary>
+    Task<MessageAttachment> GenerateVideoAsync(
+        string userId,
+        string prompt,
+        string? size = null,
+        int? durationSeconds = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>True if a usable video-generation deployment is configured and enabled.</summary>
+    bool IsVideoGenerationAvailable { get; }
 }

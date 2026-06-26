@@ -22,7 +22,8 @@ public static class AzureOpenAIServiceCollectionExtensions
         // Used by AzureOpenAIService to fetch image URLs as a defensive fallback when
         // a deployment ignores ResponseFormat=Bytes.
         services.AddHttpClient();
-        services.AddSingleton<IImageStorageService, ImageStorageService>();
+        services.AddSingleton<IMediaStorageService, MediaStorageService>();
+        services.AddSingleton<IVideoGenerationService, AzureOpenAIVideoGenerationService>();
         services.AddSingleton<IAzureOpenAIService, AzureOpenAIService>();
         return services;
     }

@@ -18,31 +18,32 @@ public class AzureOpenAIService : IAzureOpenAIService
 {
     private const string ImageFetchHttpClient = "azure-openai-image-fetch";
     private const int MaxExtractionExistingMemoryChars = 4000;
-
-    // On follow-up turns, only the most recent few AI-generated images are inlined as
-    // image bytes (so the model can actually "see" and edit them). Older generated images
-    // are represented by their tool-result text (prompt + caption) to bound context cost.
-    private const int MaxInlinedGeneratedImages = 2;
+    private const string GenerateImageToolName = "generate_image";
+    private const string GenerateVideoToolName = "generate_video";
 
     private readonly AzureOpenAIClient _client;
     private readonly ConcurrentDictionary<string, ChatClient> _chatClients = new();
     private readonly Lazy<EmbeddingClient?> _embeddingClient;
     private readonly Lazy<ImageClient?> _imageClient;
+    private readonly Lazy<ModelInfo?> _videoGenerationModel;
     private readonly AzureOpenAISettings _settings;
     private readonly MemorySettings _memorySettings;
-    private readonly IImageStorageService _imageStorage;
+    private readonly IMediaStorageService _mediaStorage;
+    private readonly IVideoGenerationService _videoGeneration;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AzureOpenAIService> _logger;
 
     public AzureOpenAIService(
         IOptions<AzureOpenAISettings> settings,
         IOptions<MemorySettings> memorySettings,
-        IImageStorageService imageStorage,
+        IMediaStorageService mediaStorage,
+        IVideoGenerationService videoGeneration,
         IHttpClientFactory httpClientFactory,
         ILogger<AzureOpenAIService> logger)
     {
         _logger = logger;
-        _imageStorage = imageStorage;
+        _mediaStorage = mediaStorage;
+        _videoGeneration = videoGeneration;
         _httpClientFactory = httpClientFactory;
         _settings = settings.Value;
         _memorySettings = memorySettings.Value;
@@ -70,10 +71,25 @@ public class AzureOpenAIService : IAzureOpenAIService
             }
             return _client.GetImageClient(model.DeploymentName);
         });
+
+        _videoGenerationModel = new Lazy<ModelInfo?>(() =>
+        {
+            if (string.IsNullOrWhiteSpace(_settings.VideoGenerationModelId)) return null;
+            var model = _settings.Models.FirstOrDefault(m => m.Id == _settings.VideoGenerationModelId);
+            if (model is null)
+            {
+                _logger.LogWarning("VideoGenerationModelId={Id} not found in Models[]", _settings.VideoGenerationModelId);
+                return null;
+            }
+            return model;
+        });
     }
 
     public bool IsImageGenerationAvailable =>
         _settings.EnableImageGeneration && _imageClient.Value is not null;
+
+    public bool IsVideoGenerationAvailable =>
+        _settings.EnableVideoGeneration && _videoGenerationModel.Value is not null;
 
     public List<ModelInfo> GetAvailableModels() => _settings.Models;
 
@@ -106,11 +122,12 @@ public class AzureOpenAIService : IAzureOpenAIService
         int maxContextSize,
         int maxMessages,
         bool allowImageGeneration,
+        bool allowVideoGeneration,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var truncated = TruncateContext(messages, maxContextSize, maxMessages);
-        _logger.LogInformation("Starting stream for model {ModelId}: {Truncated}/{Original} messages, allowImageGen={AllowImg}",
-            modelId, truncated.Count, messages.Count, allowImageGeneration);
+        _logger.LogInformation("Starting stream for model {ModelId}: {Truncated}/{Original} messages, allowImageGen={AllowImg}, allowVideoGen={AllowVideo}",
+            modelId, truncated.Count, messages.Count, allowImageGeneration, allowVideoGeneration);
 
         var openAIMessages = await TranslateAsync(truncated, userId, cancellationToken);
         if (!openAIMessages.Any(m => m is SystemChatMessage))
@@ -120,10 +137,12 @@ public class AzureOpenAIService : IAzureOpenAIService
         }
 
         var chatClient = GetChatClient(modelId);
-        var toolEnabled = allowImageGeneration && IsImageGenerationAvailable;
+        var imageToolEnabled = allowImageGeneration && IsImageGenerationAvailable;
+        var videoToolEnabled = allowVideoGeneration && IsVideoGenerationAvailable;
 
         var pass1Options = new ChatCompletionOptions();
-        if (toolEnabled) pass1Options.Tools.Add(BuildImageTool());
+        if (imageToolEnabled) pass1Options.Tools.Add(BuildImageTool());
+        if (videoToolEnabled) pass1Options.Tools.Add(BuildVideoTool());
 
         // ----- Pass 1 -----
         var pass1Text = new StringBuilder();
@@ -160,21 +179,20 @@ public class AzureOpenAIService : IAzureOpenAIService
         var attachments = new List<MessageAttachment>();
         foreach (var tc in toolCalls)
         {
-            if (tc.FunctionName != "generate_image")
-            {
-                openAIMessages.Add(new ToolChatMessage(tc.Id,
-                    """{"status":"error","message":"unknown tool"}"""));
-                continue;
-            }
-
             yield return new ToolCallStart(tc.FunctionName, tc.Id);
 
-            var (attachment, errorJson) = await TryExecuteImageToolAsync(userId, tc, cancellationToken);
+            var (attachment, errorJson) = tc.FunctionName switch
+            {
+                GenerateImageToolName => await TryExecuteImageToolAsync(userId, tc, cancellationToken),
+                GenerateVideoToolName => await TryExecuteVideoToolAsync(userId, tc, cancellationToken),
+                _ => (null, """{"status":"error","message":"unknown tool"}"""),
+            };
+
             if (attachment is not null)
             {
                 attachments.Add(attachment);
                 yield return new AttachmentReady(attachment, tc.Id);
-                openAIMessages.Add(new ToolChatMessage(tc.Id, BuildImageOkResultJson(attachment)));
+                openAIMessages.Add(new ToolChatMessage(tc.Id, BuildMediaOkResultJson(attachment)));
             }
             else
             {
@@ -200,17 +218,17 @@ public class AzureOpenAIService : IAzureOpenAIService
             }
         }
 
-        // Save the wrap-up next to each generated image as a sidecar; useful for later
+        // Save the wrap-up next to each generated media item as a sidecar; useful for
         // reconstruction, search, or re-prompting. Best-effort — never fails the stream.
         if (pass2Text.Length > 0 && attachments.Count > 0)
         {
             var description = pass2Text.ToString();
             foreach (var att in attachments)
             {
-                try { await _imageStorage.SaveDescriptionAsync(userId, att.Id, description, cancellationToken); }
+                try { await _mediaStorage.SaveDescriptionAsync(userId, att.Id, description, cancellationToken); }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to save description for image {ImageId}", att.Id);
+                    _logger.LogWarning(ex, "Failed to save description for media {MediaId}", att.Id);
                 }
             }
         }
@@ -224,12 +242,12 @@ public class AzureOpenAIService : IAzureOpenAIService
     {
         try
         {
-            var (prompt, size) = ParseImageToolArgs(tc.FunctionArguments);
-            if (string.IsNullOrWhiteSpace(prompt))
+            var args = ParseToolCallArgs<ImageToolCallArgs>(tc.FunctionArguments);
+            if (string.IsNullOrWhiteSpace(args.Prompt))
             {
                 return (null, """{"status":"error","message":"prompt is required"}""");
             }
-            var attachment = await GenerateImageAsync(userId, prompt, size, ct);
+            var attachment = await GenerateImageAsync(userId, args.Prompt, args.Size, ct);
             return (attachment, null);
         }
         catch (Exception ex)
@@ -240,33 +258,52 @@ public class AzureOpenAIService : IAzureOpenAIService
         }
     }
 
-    private static (string Prompt, string? Size) ParseImageToolArgs(BinaryData argumentsJson)
+    private async Task<(MessageAttachment? Attachment, string? ErrorJson)> TryExecuteVideoToolAsync(
+        string userId, ChatToolCall tc, CancellationToken ct)
     {
-        if (argumentsJson is null) return ("", null);
         try
         {
-            using var doc = JsonDocument.Parse(argumentsJson.ToMemory());
-            var root = doc.RootElement;
-            var prompt = root.TryGetProperty("prompt", out var p) ? p.GetString() ?? "" : "";
-            var size = root.TryGetProperty("size", out var s) ? s.GetString() : null;
-            return (prompt, size);
+            var args = ParseToolCallArgs<VideoToolCallArgs>(tc.FunctionArguments);
+            if (string.IsNullOrWhiteSpace(args.Prompt))
+            {
+                return (null, """{"status":"error","message":"prompt is required"}""");
+            }
+            var attachment = await GenerateVideoAsync(userId, args.Prompt, args.Size, args.DurationSeconds, ct);
+            return (attachment, null);
         }
-        catch (JsonException)
+        catch (Exception ex)
         {
-            return ("", null);
+            _logger.LogError(ex, "generate_video tool execution failed");
+            var safeMsg = JsonEncodedText.Encode(ex.Message).ToString();
+            return (null, $$"""{"status":"error","message":"{{safeMsg}}"}""");
         }
     }
 
-    private static string BuildImageOkResultJson(MessageAttachment a) =>
+    private static T ParseToolCallArgs<T>(BinaryData argumentsJson) where T : struct
+    {
+        if (argumentsJson is null) return default;
+        try
+        {
+            return JsonSerializer.Deserialize<T>(argumentsJson.ToMemory().Span, ToolCallJsonOptions);
+        }
+        catch (JsonException)
+        {
+            return default;
+        }
+    }
+
+    private static string BuildMediaOkResultJson(MessageAttachment a) =>
         JsonSerializer.Serialize(new
         {
             status = "ok",
-            imageId = a.Id,
+            mediaId = a.Id,
+            type = a.Type,
             prompt = a.Prompt,
             revisedPrompt = a.RevisedPrompt,
             width = a.Width,
             height = a.Height,
-            note = "Image saved and shown to the user. Briefly describe what you generated; do not include the URL.",
+            durationSeconds = a.DurationSeconds,
+            note = "Media saved and shown to the user. Briefly describe what you generated; do not include the URL.",
         });
 
     private static AssistantChatMessage BuildAssistantToolCallMessage(List<ChatToolCall> toolCalls, string leadingText)
@@ -300,28 +337,60 @@ public class AzureOpenAIService : IAzureOpenAIService
         """;
 
         return ChatTool.CreateFunctionTool(
-            functionName: "generate_image",
+            functionName: GenerateImageToolName,
             functionDescription: "Generates an image from a text prompt and shows it to the user inline. Use this whenever the user asks for a picture, drawing, illustration, design visualization, photo, etc.",
             functionParameters: BinaryData.FromString(schema));
     }
 
+        private static ChatTool BuildVideoTool()
+        {
+                const string schema = """
+                {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "Detailed English description of the video to generate. Refine vague user prompts; include subject motion, camera movement, setting, style, lighting, and mood when relevant."
+                        },
+                        "size": {
+                            "type": "string",
+                            "enum": ["720x1280", "1280x720"],
+                            "description": "Video dimensions. 1280x720 for landscape/wide scenes, 720x1280 (default) for portrait/tall scenes."
+                        },
+                        "duration_seconds": {
+                            "type": "integer",
+                            "enum": [4, 8, 12],
+                            "description": "Video duration in seconds. Use 4 unless the user asks for a longer clip."
+                        }
+                    },
+                    "required": ["prompt"]
+                }
+                """;
+
+                return ChatTool.CreateFunctionTool(
+                        functionName: GenerateVideoToolName,
+                        functionDescription: "Generates a short video from a text prompt and shows it to the user inline. Use this whenever the user asks for a video, clip, animation, moving scene, cinematic shot, etc.",
+                        functionParameters: BinaryData.FromString(schema));
+        }
+
     /// <summary>
     /// Translates our persisted message schema into OpenAI's typed chat messages.
     /// Handles three non-trivial cases:
-    ///  - User messages with image Attachments: read bytes from storage and inline
+    ///  - User messages with image attachments: read bytes from storage and inline
     ///    them as ImageParts (Azure OpenAI cannot fetch our internal URLs).
     ///  - Assistant messages with persisted ToolCalls: expand into the canonical
     ///    asst_tool_call → tool_result triple so the model sees the same shape on
     ///    follow-up turns as it produced originally. The tool_result text carries the
-    ///    generation prompt plus the saved caption, and the most recent generated images
-    ///    are additionally inlined as a follow-up user image message so the model can see them.
+    ///    generation prompt plus the saved caption. The most recent generated images are
+    ///    additionally inlined as a follow-up user image message; videos are added as
+    ///    text references because chat completions do not accept video content parts.
     ///  - Plain text messages: straightforward 1:1.
     /// </summary>
     private async Task<List<OpenAI.Chat.ChatMessage>> TranslateAsync(
         List<AppChatMessage> messages, string userId, CancellationToken ct)
     {
         var result = new List<OpenAI.Chat.ChatMessage>(messages.Count);
-        var inlineImageIds = SelectRecentGeneratedImageIds(messages, MaxInlinedGeneratedImages);
+        var mediaReferenceId = SelectMostRecentGeneratedMediaId(messages);
 
         foreach (var m in messages)
         {
@@ -355,9 +424,11 @@ public class AzureOpenAIService : IAzureOpenAIService
                         {
                             var tc = toolCalls[i];
                             string toolResult;
-                            if (tc.Name == "generate_image" && m.Attachments is { Count: > 0 } atts && i < atts.Count)
+                            if (IsMediaToolCall(tc)
+                                && m.Attachments is { Count: > 0 } atts
+                                && i < atts.Count)
                             {
-                                toolResult = await BuildImageReplayResultJsonAsync(userId, atts[i], ct);
+                                toolResult = await BuildMediaReplayResultJsonAsync(userId, atts[i], ct);
                             }
                             else
                             {
@@ -371,11 +442,7 @@ public class AzureOpenAIService : IAzureOpenAIService
                             result.Add(new AssistantChatMessage(m.Content));
                         }
 
-                        // Inline the most recent generated image(s) as a follow-up user image
-                        // message. Tool/assistant messages can't carry image parts in chat
-                        // completions, so this synthetic user turn is how the model actually
-                        // "sees" what it drew and can edit it on request.
-                        await AppendInlinedImagesAsync(result, m, userId, inlineImageIds, ct);
+                        await AppendGeneratedMediaReferenceAsync(result, m, userId, mediaReferenceId, ct);
                     }
                     else
                     {
@@ -438,7 +505,7 @@ public class AzureOpenAIService : IAzureOpenAIService
         var filename = ExtractFilename(att.Url);
         if (filename is null) return null;
 
-        var read = await _imageStorage.TryReadAsync(userId, filename, ct);
+        var read = await _mediaStorage.TryReadAsync(userId, filename, ct);
         if (read is null)
         {
             _logger.LogWarning("Image attachment not found on disk: {Filename}", filename);
@@ -450,13 +517,12 @@ public class AzureOpenAIService : IAzureOpenAIService
     }
 
     /// <summary>
-    /// Returns the attachment ids of the most recent <paramref name="max"/> AI-generated
-    /// images across the conversation. These get their bytes inlined on replay; older ones
-    /// are represented by tool-result text only.
+    /// Returns the most recent generated media id. Images can be byte-inlined on replay;
+    /// videos are represented by text because chat content parts do not support video.
     /// </summary>
-    private static HashSet<string> SelectRecentGeneratedImageIds(List<AppChatMessage> messages, int max)
+    private static string? SelectMostRecentGeneratedMediaId(List<AppChatMessage> messages)
     {
-        var ids = new List<string>();
+        string? mediaId = null;
         foreach (var m in messages)
         {
             if (m.Role != "assistant"
@@ -468,61 +534,102 @@ public class AzureOpenAIService : IAzureOpenAIService
 
             for (var i = 0; i < tcs.Count && i < atts.Count; i++)
             {
-                if (tcs[i].Name == "generate_image" && atts[i].Type == "image")
+                if (IsGeneratedMedia(tcs[i], atts[i]))
                 {
-                    ids.Add(atts[i].Id);
+                    mediaId = atts[i].Id;
                 }
             }
         }
 
-        return ids.Skip(Math.Max(0, ids.Count - max)).ToHashSet(StringComparer.Ordinal);
+        return mediaId;
     }
 
     /// <summary>
-    /// Appends a synthetic user message carrying the bytes of this assistant turn's generated
-    /// images that are in the recent-inline set, so the model can see them on follow-up turns.
+    /// Appends a synthetic user message that gives the model follow-up context for recent
+    /// generated media. Images can be inlined as bytes; videos are represented by text.
     /// </summary>
-    private async Task AppendInlinedImagesAsync(
+    private async Task AppendGeneratedMediaReferenceAsync(
         List<OpenAI.Chat.ChatMessage> result,
         AppChatMessage m,
         string userId,
-        HashSet<string> inlineImageIds,
+        string? referenceId,
         CancellationToken ct)
     {
-        if (m.Attachments is not { Count: > 0 } atts) return;
+        if (string.IsNullOrWhiteSpace(referenceId) || m.Attachments is not { Count: > 0 } atts) return;
 
-        var imageParts = new List<ChatMessageContentPart>();
-        foreach (var att in atts)
+        var att = atts.FirstOrDefault(a => string.Equals(a.Id, referenceId, StringComparison.Ordinal));
+        if (att is null) return;
+
+        if (string.Equals(att.Type, "image", StringComparison.Ordinal))
         {
-            if (!inlineImageIds.Contains(att.Id)) continue;
-            var part = await TryBuildImagePartAsync(userId, att, ct);
-            if (part is not null) imageParts.Add(part);
+            var imagePart = await TryBuildImagePartAsync(userId, att, ct);
+            if (imagePart is null) return;
+
+            result.Add(new UserChatMessage(new[]
+            {
+                ChatMessageContentPart.CreateTextPart(
+                    "(Reference: image you generated earlier in this conversation, shown so you can see and edit it.)"),
+                imagePart,
+            }));
+            return;
         }
 
-        if (imageParts.Count == 0) return;
-
-        imageParts.Insert(0, ChatMessageContentPart.CreateTextPart(
-            "(Reference: image(s) you generated earlier in this conversation, shown so you can see and edit them.)"));
-        result.Add(new UserChatMessage(imageParts));
+        if (string.Equals(att.Type, "video", StringComparison.Ordinal))
+        {
+            var caption = await _mediaStorage.TryReadDescriptionAsync(userId, att.Id, ct);
+            result.Add(new UserChatMessage(
+                "(Reference: video(s) you generated earlier in this conversation. You cannot see the video bytes here, but this text preserves the prompt, dimensions, duration, and caption for follow-up requests.)\n\n" +
+                BuildVideoReferenceText(att, caption)));
+        }
     }
 
+    private static string BuildVideoReferenceText(MessageAttachment att, string? caption)
+    {
+        var details = new List<string> { $"videoId={att.Id}" };
+        if (!string.IsNullOrWhiteSpace(att.Prompt)) details.Add($"prompt={att.Prompt}");
+        if (att.Width is not null && att.Height is not null) details.Add($"size={att.Width}x{att.Height}");
+        if (att.DurationSeconds is not null) details.Add($"durationSeconds={att.DurationSeconds}");
+        if (!string.IsNullOrWhiteSpace(caption)) details.Add($"caption={caption}");
+        return string.Join("; ", details);
+    }
+
+    private static bool IsMediaToolCall(MessageToolCall toolCall) =>
+        IsMediaToolName(toolCall.Name);
+
+    private static bool IsMediaToolName(string? toolName) =>
+        string.Equals(toolName, GenerateImageToolName, StringComparison.Ordinal)
+        || string.Equals(toolName, GenerateVideoToolName, StringComparison.Ordinal);
+
+    private static bool IsGeneratedImage(MessageToolCall toolCall, MessageAttachment attachment) =>
+        string.Equals(toolCall.Name, GenerateImageToolName, StringComparison.Ordinal)
+        && string.Equals(attachment.Type, "image", StringComparison.Ordinal);
+
+    private static bool IsGeneratedVideo(MessageToolCall toolCall, MessageAttachment attachment) =>
+        string.Equals(toolCall.Name, GenerateVideoToolName, StringComparison.Ordinal)
+        && string.Equals(attachment.Type, "video", StringComparison.Ordinal);
+
+    private static bool IsGeneratedMedia(MessageToolCall toolCall, MessageAttachment attachment) =>
+        IsGeneratedImage(toolCall, attachment) || IsGeneratedVideo(toolCall, attachment);
+
     /// <summary>
-    /// Tool-result JSON for a replayed generated image: the original prompt plus the saved
-    /// caption (the model's own description), so even when the bytes aren't inlined the model
-    /// retains a faithful text representation of what it drew.
+    /// Tool-result JSON for replayed generated media: the original prompt plus the saved
+    /// caption (the model's own description), so the model retains a faithful text
+    /// representation even when the bytes aren't inlined.
     /// </summary>
-    private async Task<string> BuildImageReplayResultJsonAsync(
+    private async Task<string> BuildMediaReplayResultJsonAsync(
         string userId, MessageAttachment a, CancellationToken ct)
     {
-        var caption = await _imageStorage.TryReadDescriptionAsync(userId, a.Id, ct);
+        var caption = await _mediaStorage.TryReadDescriptionAsync(userId, a.Id, ct);
         return JsonSerializer.Serialize(new
         {
             status = "ok",
-            imageId = a.Id,
+            mediaId = a.Id,
+            type = a.Type,
             prompt = a.Prompt,
             revisedPrompt = a.RevisedPrompt,
             width = a.Width,
             height = a.Height,
+            durationSeconds = a.DurationSeconds,
             caption = string.IsNullOrWhiteSpace(caption) ? null : caption,
         });
     }
@@ -637,7 +744,7 @@ public class AzureOpenAIService : IAzureOpenAIService
             throw new InvalidOperationException("Image generation is disabled");
         }
 
-        var (parsedSize, w, h) = ParseSize(size);
+        var (parsedSize, w, h) = ParseImageSize(size);
 
         // ResponseFormat is intentionally NOT set: gpt-image-1/2 deployments reject it
         // ("Unknown parameter: 'response_format'"), and they return base64 bytes by default.
@@ -674,7 +781,7 @@ public class AzureOpenAIService : IAzureOpenAIService
             throw new InvalidOperationException("Image generation returned neither bytes nor a URL");
         }
 
-        return await _imageStorage.SaveAsync(
+        return await _mediaStorage.SaveAsync(
             userId,
             bytes.ToMemory(),
             mimeType: "image/png",
@@ -685,29 +792,101 @@ public class AzureOpenAIService : IAzureOpenAIService
             cancellationToken: cancellationToken);
     }
 
-    private static (GeneratedImageSize Size, int Width, int Height) ParseSize(string? size)
+    public async Task<MessageAttachment> GenerateVideoAsync(
+        string userId,
+        string prompt,
+        string? size = null,
+        int? durationSeconds = null,
+        CancellationToken cancellationToken = default)
     {
-        // Default: 1024x1024 (works for both DALL-E 3 and gpt-image-*).
-        if (string.IsNullOrWhiteSpace(size))
+        var model = _videoGenerationModel.Value
+            ?? throw new InvalidOperationException("Video generation is not configured");
+        if (!_settings.EnableVideoGeneration)
         {
-            return (GeneratedImageSize.W1024xH1024, 1024, 1024);
+            throw new InvalidOperationException("Video generation is disabled");
         }
 
+        var (width, height) = ParseSize(size, defaultWidth: 720, defaultHeight: 1280);
+        var duration = ParseVideoDuration(durationSeconds);
+
+        _logger.LogInformation("Generating video for user {UserId}, prompt length={Len}, size={Size}, duration={Duration}s",
+            userId, prompt.Length, $"{width}x{height}", duration);
+
+        var video = await _videoGeneration.GenerateAsync(
+            model.DeploymentName,
+            prompt,
+            width,
+            height,
+            duration,
+            cancellationToken);
+
+        return await _mediaStorage.SaveAsync(
+            userId,
+            video.Bytes,
+            mimeType: video.MimeType,
+            prompt: prompt,
+            width: width,
+            height: height,
+            durationSeconds: duration,
+            attachmentType: "video",
+            cancellationToken: cancellationToken);
+    }
+
+    private static int ParseVideoDuration(int? durationSeconds) =>
+        durationSeconds is 8 or 12 ? durationSeconds.Value : 4;
+
+    private static readonly JsonSerializerOptions ToolCallJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
+    private readonly record struct ImageToolCallArgs
+    {
+        [JsonPropertyName("prompt")]
+        public string Prompt { get; init; }
+
+        [JsonPropertyName("size")]
+        public string? Size { get; init; }
+    }
+
+    private readonly record struct VideoToolCallArgs
+    {
+        [JsonPropertyName("prompt")]
+        public string Prompt { get; init; }
+
+        [JsonPropertyName("size")]
+        public string? Size { get; init; }
+
+        [JsonPropertyName("duration_seconds")]
+        public int? DurationSeconds { get; init; }
+    }
+
+    private static (GeneratedImageSize Size, int Width, int Height) ParseImageSize(string? size)
+    {
+        var (w, h) = ParseSize(size, defaultWidth: 1024, defaultHeight: 1024);
+
+        // Prefer the predefined values where they line up exactly (allows the SDK
+        // to send DALL-E-style enum strings); otherwise fall through to a custom size.
+        if (w == 1024 && h == 1024) return (GeneratedImageSize.W1024xH1024, 1024, 1024);
+        if (w == 1792 && h == 1024) return (GeneratedImageSize.W1792xH1024, 1792, 1024);
+        if (w == 1024 && h == 1792) return (GeneratedImageSize.W1024xH1792, 1024, 1792);
+        return (new GeneratedImageSize(w, h), w, h);
+    }
+
+    private static (int Width, int Height) ParseSize(string? size, int defaultWidth, int defaultHeight)
+    {
+        if (string.IsNullOrWhiteSpace(size)) return (defaultWidth, defaultHeight);
         var parts = size.Split('x', 2);
-        if (parts.Length == 2 &&
-            int.TryParse(parts[0], out var w) &&
-            int.TryParse(parts[1], out var h) &&
-            w > 0 && h > 0)
+        if (parts.Length == 2
+            && int.TryParse(parts[0], out var width)
+            && int.TryParse(parts[1], out var height)
+            && width > 0
+            && height > 0)
         {
-            // Prefer the predefined values where they line up exactly (allows the SDK
-            // to send DALL-E-style enum strings); otherwise fall through to a custom size.
-            if (w == 1024 && h == 1024) return (GeneratedImageSize.W1024xH1024, 1024, 1024);
-            if (w == 1792 && h == 1024) return (GeneratedImageSize.W1792xH1024, 1792, 1024);
-            if (w == 1024 && h == 1792) return (GeneratedImageSize.W1024xH1792, 1024, 1792);
-            return (new GeneratedImageSize(w, h), w, h);
+            return (width, height);
         }
 
-        return (GeneratedImageSize.W1024xH1024, 1024, 1024);
+        return (defaultWidth, defaultHeight);
     }
 
     public async Task<float[]?> TryGenerateEmbeddingAsync(string text, CancellationToken cancellationToken = default)

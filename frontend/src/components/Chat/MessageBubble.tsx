@@ -2,7 +2,7 @@ import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Check, Sparkles, Brain, ImageIcon, Loader2 } from 'lucide-react';
+import { Copy, Check, Sparkles, Brain, ImageIcon, Loader2, Film } from 'lucide-react';
 import { useState } from 'react';
 import type { Memory, Message, MessageAttachment } from '../../types';
 import { imagesApi } from '../../services/imagesApi';
@@ -244,10 +244,18 @@ function AttachmentGrid({ attachments, alignment }: { attachments: MessageAttach
       } ${alignment === 'right' ? 'justify-items-end' : 'justify-items-start'}`}
     >
       {attachments.map(a => (
-        <ImageAttachmentView key={a.id} attachment={a} />
+        <MediaAttachmentView key={a.id} attachment={a} />
       ))}
     </div>
   );
+}
+
+function MediaAttachmentView({ attachment }: { attachment: MessageAttachment }) {
+  if (attachment.type === 'video') {
+    return <VideoAttachmentView attachment={attachment} />;
+  }
+
+  return <ImageAttachmentView attachment={attachment} />;
 }
 
 function ImageAttachmentView({ attachment }: { attachment: MessageAttachment }) {
@@ -300,6 +308,35 @@ function ImageAttachmentView({ attachment }: { attachment: MessageAttachment }) 
         <Lightbox src={src} alt={attachment.prompt ?? ''} onClose={() => setLightboxOpen(false)} />
       )}
     </>
+  );
+}
+
+function VideoAttachmentView({ attachment }: { attachment: MessageAttachment }) {
+  const [errored, setErrored] = useState(false);
+  const src = imagesApi.buildAuthedUrl(attachment.url);
+
+  if (errored) {
+    return (
+      <div className="aspect-video w-72 max-w-md flex flex-col items-center justify-center gap-1 rounded-xl border border-outline-variant/20
+                      bg-surface-container-high text-on-surface-variant text-xs">
+        <Film size={20} />
+        <span>Video unavailable</span>
+      </div>
+    );
+  }
+
+  return (
+    <video
+      controls
+      preload="metadata"
+      title={attachment.prompt ?? 'Video'}
+      onError={() => setErrored(true)}
+      className="block w-full max-w-md rounded-xl overflow-hidden border border-outline-variant/20
+                 bg-surface-container-high shadow-sm"
+      style={{ aspectRatio: attachment.width && attachment.height ? `${attachment.width} / ${attachment.height}` : '16 / 9' }}
+    >
+      <source src={src} type={attachment.mimeType || 'video/mp4'} />
+    </video>
   );
 }
 
@@ -374,9 +411,8 @@ export function StreamingBubble({ content, attachments, toolStatus }: StreamingB
             </div>
           </div>
         )}
-        {toolStatus === 'generate_image' && (
-          <ToolStatusPill label="Generating image…" />
-        )}
+        {toolStatus === 'generate_image' && <ToolStatusPill label="Generating image…" />}
+        {toolStatus === 'generate_video' && <ToolStatusPill label="Generating video…" />}
         {attachments.length > 0 && (
           <AttachmentGrid attachments={attachments} alignment="left" />
         )}

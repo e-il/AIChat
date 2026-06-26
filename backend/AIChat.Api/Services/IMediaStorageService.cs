@@ -2,11 +2,11 @@ using AIChat.Api.Models;
 
 namespace AIChat.Api.Services;
 
-public interface IImageStorageService
+public interface IMediaStorageService
 {
     /// <summary>
-    /// Persists raw image bytes for a user and returns a MessageAttachment whose Url
-    /// is a server-relative path (/api/images/{userId}/{filename}). The bytes live on
+    /// Persists raw media bytes for a user and returns a MessageAttachment whose Url
+    /// is a server-relative path (/api/images/{filename}) or (/api/videos/{filename}). The bytes live on
     /// disk under data/images/{userId}/.
     /// </summary>
     Task<MessageAttachment> SaveAsync(
@@ -17,10 +17,12 @@ public interface IImageStorageService
         string? revisedPrompt = null,
         int? width = null,
         int? height = null,
+        int? durationSeconds = null,
+        string attachmentType = "image",
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Resolves a stored image's absolute path. Returns null if the file does not exist
+    /// Resolves a stored media file's absolute path. Returns null if the file does not exist
     /// or if the requested filename escapes the user's directory.
     /// </summary>
     string? TryGetPath(string userId, string filename);
@@ -33,7 +35,7 @@ public interface IImageStorageService
         string userId, string filename, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Reads a stored image by filename alone, locating it across user directories.
+    /// Reads stored media by filename alone, locating it across user directories.
     /// Filenames are globally-unique 128-bit GUIDs, so this is unambiguous. Used by the
     /// public (unauthenticated) image-serving endpoint. Returns null if not found or if
     /// the filename is unsafe.
@@ -42,13 +44,13 @@ public interface IImageStorageService
         string filename, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Saves the model's description of a generated image as `{imageId}.description.txt`
-    /// next to the image bytes. Called after the second tool-calling pass produces text.
+    /// Saves the model's description of generated media as `{mediaId}.description.txt`
+    /// next to the media bytes. Called after the second tool-calling pass produces text.
     /// </summary>
     Task SaveDescriptionAsync(
-        string userId, string imageId, string description, CancellationToken cancellationToken = default);
+        string userId, string mediaId, string description, CancellationToken cancellationToken = default);
 
-    /// <summary>Reads the saved description sidecar for an image, if any.</summary>
+    /// <summary>Reads the saved description sidecar for generated media, if any.</summary>
     Task<string?> TryReadDescriptionAsync(
-        string userId, string imageId, CancellationToken cancellationToken = default);
+        string userId, string mediaId, CancellationToken cancellationToken = default);
 }

@@ -139,8 +139,9 @@ public class ChatHub : Hub
             }
 
             var allowImageGen = _azureOpenAISettings.EnableImageGeneration;
+            var allowVideoGen = _azureOpenAISettings.EnableVideoGeneration;
             await foreach (var ev in _openAIService.StreamChatCompletionAsync(
-                userId, messagesToSend, modelId, maxContextSize, maxMessages, allowImageGen))
+                userId, messagesToSend, modelId, maxContextSize, maxMessages, allowImageGen, allowVideoGen))
             {
                 switch (ev)
                 {

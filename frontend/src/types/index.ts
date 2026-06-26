@@ -6,8 +6,8 @@ export interface Message {
   // Memories injected into the system prompt for this assistant turn.
   // Only populated on assistant messages that used memory. Persisted with the message.
   usedMemories?: Memory[];
-  // Image (or future file) attachments. Set on user messages for vision input,
-  // and on assistant messages for generated images.
+  // Media attachments. Set on user messages for vision input,
+  // and on assistant messages for generated media.
   attachments?: MessageAttachment[];
   // Tool calls the assistant invoked (e.g. generate_image). Persisted so the next
   // turn can replay the asst_tool_call → tool_result shape back to the model.
@@ -16,13 +16,14 @@ export interface Message {
 
 export interface MessageAttachment {
   id: string;
-  type: 'image';
+  type: 'image' | 'video';
   mimeType: string;
   url: string;          // server-relative, e.g. /api/images/{filename}
   prompt?: string;
   revisedPrompt?: string;
   width?: number;
   height?: number;
+  durationSeconds?: number;
 }
 
 export interface MessageToolCall {

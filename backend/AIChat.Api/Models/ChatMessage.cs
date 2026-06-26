@@ -17,13 +17,14 @@ public class ChatMessage
 public class MessageAttachment
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
-    public string Type { get; set; } = "image"; // "image" (future: "file", "audio")
+    public string Type { get; set; } = "image"; // "image" | "video" (future: "file", "audio")
     public string MimeType { get; set; } = "image/png";
-    public string Url { get; set; } = ""; // server-relative, e.g. /api/images/{userId}/{file}
+    public string Url { get; set; } = ""; // server-relative, e.g. /api/images/{file} or /api/videos/{file}
     public string? Prompt { get; set; }
     public string? RevisedPrompt { get; set; }
     public int? Width { get; set; }
     public int? Height { get; set; }
+    public int? DurationSeconds { get; set; }
 }
 
 public class MessageToolCall

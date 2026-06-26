@@ -7,7 +7,9 @@ namespace AIChat.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class ImagesController : ControllerBase
+[Route("api/images")]
+[Route("api/videos")]
+public class MediaController : ControllerBase
 {
     private static readonly string[] AllowedMimeTypes =
     {
@@ -15,14 +17,14 @@ public class ImagesController : ControllerBase
     };
     private const long MaxUploadBytes = 10 * 1024 * 1024; // 10 MB
 
-    private readonly IImageStorageService _storage;
+    private readonly IMediaStorageService _storage;
     private readonly IAzureOpenAIService _openAI;
-    private readonly ILogger<ImagesController> _logger;
+    private readonly ILogger<MediaController> _logger;
 
-    public ImagesController(
-        IImageStorageService storage,
+    public MediaController(
+        IMediaStorageService storage,
         IAzureOpenAIService openAI,
-        ILogger<ImagesController> logger)
+        ILogger<MediaController> logger)
     {
         _storage = storage;
         _openAI = openAI;
@@ -62,9 +64,9 @@ public class ImagesController : ControllerBase
     }
 
     /// <summary>
-    /// Serves a stored image. Unauthenticated: filenames are unguessable 128-bit GUIDs,
-    /// so the image is located by filename alone. The endpoint is reachable via plain
-    /// <img src> without any token in the URL.
+    /// Serves stored media. Unauthenticated: filenames are unguessable 128-bit GUIDs,
+    /// so the media is located by filename alone. The endpoint is reachable via plain
+    /// <img>/<video> src without any token in the URL.
     /// </summary>
     [HttpGet("{filename}")]
     public async Task<IActionResult> Get(string filename, CancellationToken ct)
