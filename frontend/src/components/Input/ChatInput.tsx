@@ -39,6 +39,52 @@ function formatSize(size: number): string {
   return size.toString();
 }
 
+function useImeEnterGuard() {
+  const isComposingRef = useRef(false);
+  const justEndedComposingRef = useRef(false);
+  const compositionEndTimeoutRef = useRef<number | null>(null);
+
+  const clearCompositionEndProtection = () => {
+    if (compositionEndTimeoutRef.current !== null) {
+      window.clearTimeout(compositionEndTimeoutRef.current);
+      compositionEndTimeoutRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => clearCompositionEndProtection();
+  }, []);
+
+  return {
+    compositionHandlers: {
+      onCompositionStart: () => {
+        clearCompositionEndProtection();
+        isComposingRef.current = true;
+        justEndedComposingRef.current = false;
+      },
+      onCompositionEnd: () => {
+        isComposingRef.current = false;
+        justEndedComposingRef.current = true;
+        clearCompositionEndProtection();
+        compositionEndTimeoutRef.current = window.setTimeout(() => {
+          justEndedComposingRef.current = false;
+          compositionEndTimeoutRef.current = null;
+        }, 0);
+      },
+    },
+    shouldSkipEnterForIme: (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (isComposingRef.current || e.nativeEvent.isComposing) return true;
+
+      if (justEndedComposingRef.current) {
+        e.preventDefault();
+        return true;
+      }
+
+      return false;
+    },
+  };
+}
+
 // Small icon button with hover dropdown
 function IconDropdown<T>({
   icon,
@@ -262,6 +308,7 @@ export function ChatInput({
   const [uploading, setUploading] = useState<UploadingItem[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { compositionHandlers, shouldSkipEnterForIme } = useImeEnterGuard();
 
   const isUploading = uploading.length > 0;
   const canSend =
@@ -274,10 +321,12 @@ export function ChatInput({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
+    if (e.key !== 'Enter' || e.shiftKey) return;
+
+    if (shouldSkipEnterForIme(e)) return;
+
+    e.preventDefault();
+    handleSubmit();
   };
 
   // Auto-resize textarea
@@ -401,6 +450,7 @@ export function ChatInput({
             ref={textareaRef}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
+            {...compositionHandlers}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             disabled={disabled}
