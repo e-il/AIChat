@@ -276,10 +276,10 @@ public class AzureOpenAIService : IAzureOpenAIService
                 return (null, """{"status":"error","message":"prompt is required"}""");
             }
 
-            var source = FindGeneratedImageAttachment(messages, args.SourceImageId);
+            var source = FindEditableImageAttachment(messages, args.SourceImageId);
             if (source is null)
             {
-                return (null, """{"status":"error","message":"no generated image is available to edit"}""");
+                return (null, """{"status":"error","message":"no editable image is available"}""");
             }
 
             var attachment = await EditImageAsync(userId, args.Prompt, source, args.Size, ct);
@@ -397,7 +397,7 @@ public class AzureOpenAIService : IAzureOpenAIService
                         },
                         "source_image_id": {
                             "type": "string",
-                            "description": "Attachment id of the generated image to edit. Omit this to edit the most recent generated image."
+                            "description": "Attachment id of the uploaded or generated image to edit. Omit this to edit the most recent user-uploaded image, falling back to the most recent generated image."
                         },
                         "size": {
                             "type": "string",
@@ -411,7 +411,7 @@ public class AzureOpenAIService : IAzureOpenAIService
 
                 return ChatTool.CreateFunctionTool(
                         functionName: EditImageToolName,
-                        functionDescription: "Edits an existing generated image and returns a new image. Use this instead of generate_image when the user asks to modify, recolor, remove, add, or otherwise change the previous image while preserving the rest.",
+                        functionDescription: "Edits an existing uploaded or generated image and returns a new image. Use this instead of generate_image when the user asks to modify, recolor, remove, add, or otherwise change an existing image while preserving the rest.",
                         functionParameters: BinaryData.FromString(schema));
         }
 
@@ -691,32 +691,51 @@ public class AzureOpenAIService : IAzureOpenAIService
     private static bool IsGeneratedMedia(MessageToolCall toolCall, MessageAttachment attachment) =>
         IsGeneratedImage(toolCall, attachment) || IsGeneratedVideo(toolCall, attachment);
 
-    private static MessageAttachment? FindGeneratedImageAttachment(List<AppChatMessage> messages, string? sourceImageId)
+    private static MessageAttachment? FindEditableImageAttachment(List<AppChatMessage> messages, string? sourceImageId)
     {
-        MessageAttachment? latest = null;
+        MessageAttachment? latestUploaded = null;
+        MessageAttachment? latestGenerated = null;
         foreach (var m in messages)
         {
-            if (m.Role != "assistant"
-                || m.ToolCalls is not { Count: > 0 } tcs
-                || m.Attachments is not { Count: > 0 } atts)
+            if (m.Attachments is not { Count: > 0 } atts)
             {
                 continue;
             }
 
-            for (var i = 0; i < tcs.Count && i < atts.Count; i++)
+            if (!string.IsNullOrWhiteSpace(sourceImageId))
             {
-                if (!IsGeneratedImage(tcs[i], atts[i])) continue;
-                if (!string.IsNullOrWhiteSpace(sourceImageId)
-                    && string.Equals(atts[i].Id, sourceImageId, StringComparison.Ordinal))
+                var matched = atts.FirstOrDefault(att =>
+                    IsImageAttachment(att) && string.Equals(att.Id, sourceImageId, StringComparison.Ordinal));
+                if (matched is not null)
                 {
-                    return atts[i];
+                    return matched;
                 }
-                latest = atts[i];
+            }
+
+            if (string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))
+            {
+                latestUploaded = atts.LastOrDefault(IsImageAttachment) ?? latestUploaded;
+                continue;
+            }
+
+            if (string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase)
+                && m.ToolCalls is { Count: > 0 } tcs)
+            {
+                for (var i = 0; i < tcs.Count && i < atts.Count; i++)
+                {
+                    if (IsGeneratedImage(tcs[i], atts[i]))
+                    {
+                        latestGenerated = atts[i];
+                    }
+                }
             }
         }
 
-        return string.IsNullOrWhiteSpace(sourceImageId) ? latest : null;
+        return string.IsNullOrWhiteSpace(sourceImageId) ? latestUploaded ?? latestGenerated : null;
     }
+
+    private static bool IsImageAttachment(MessageAttachment attachment) =>
+        string.Equals(attachment.Type, "image", StringComparison.Ordinal);
 
     /// <summary>
     /// Tool-result JSON for replayed generated media: the original prompt plus the saved
