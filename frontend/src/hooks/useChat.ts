@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import * as signalR from '@microsoft/signalr';
 import type { Memory, Message, MessageAttachment, MessageToolCall } from '../types';
 import { getAuthCode } from '../services/auth';
@@ -17,8 +17,13 @@ export function useChat() {
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingAttachments, setStreamingAttachments] = useState<MessageAttachment[]>([]);
   const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const [streamingConversationId, setStreamingConversationId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const connectionRef = useRef<signalR.HubConnection | null>(null);
   const onStreamCompleteRef = useRef<((payload: StreamCompletePayload) => void) | null>(null);
   const onAuthErrorRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => { void connectionRef.current?.stop(); }, []);
 
   const sendMessage = useCallback(async (
     conversationId: string,
@@ -31,6 +36,7 @@ export function useChat() {
     promptProfileId: string = DEFAULT_PROMPT_PROFILE_ID,
     customSystemPrompt: string | null = null,
   ) => {
+    if (connectionRef.current) return;
     const authCode = getAuthCode();
     if (!authCode) {
       onAuthErrorRef.current?.();
@@ -38,6 +44,8 @@ export function useChat() {
     }
 
     setIsStreaming(true);
+    setStreamingConversationId(conversationId);
+    setError(null);
     setStreamingContent('');
     setStreamingAttachments([]);
     setToolStatus(null);
@@ -49,6 +57,24 @@ export function useChat() {
     const connection = new signalR.HubConnectionBuilder()
       .withUrl('/chathub', { accessTokenFactory: () => authCode })
       .build();
+    connectionRef.current = connection;
+    let finished = false;
+
+    const resetStream = () => {
+      setIsStreaming(false);
+      setStreamingContent('');
+      setStreamingAttachments([]);
+      setToolStatus(null);
+      if (connectionRef.current === connection) connectionRef.current = null;
+    };
+
+    connection.onclose(() => {
+      if (!finished) {
+        finished = true;
+        resetStream();
+        setError('Connection interrupted. Please send your message again.');
+      }
+    });
 
     connection.on('MemoryUsed', (_convId: string, memories: Memory[]) => {
       usedMemories = memories;
@@ -73,10 +99,8 @@ export function useChat() {
     });
 
     connection.on('StreamComplete', (convId: string, completedToolCalls: MessageToolCall[] = []) => {
-      setIsStreaming(false);
-      setStreamingContent('');
-      setStreamingAttachments([]);
-      setToolStatus(null);
+      finished = true;
+      resetStream();
       toolCalls = completedToolCalls;
       onStreamCompleteRef.current?.({
         conversationId: convId,
@@ -90,10 +114,9 @@ export function useChat() {
 
     connection.on('Error', (_convId: string, error: string) => {
       console.error('Chat error:', error);
-      setIsStreaming(false);
-      setStreamingContent('');
-      setStreamingAttachments([]);
-      setToolStatus(null);
+      finished = true;
+      resetStream();
+      setError(error);
       if (error.includes('authentication')) {
         onAuthErrorRef.current?.();
       }
@@ -102,8 +125,7 @@ export function useChat() {
 
     try {
       await connection.start();
-      connection
-        .send('SendMessage', {
+      await connection.send('SendMessage', {
           conversationId,
           messages,
           modelId,
@@ -113,14 +135,13 @@ export function useChat() {
           explicitMemoryIds,
           promptProfileId,
           customSystemPrompt,
-        })
-        .catch(err => console.error('SignalR send() rejected:', err));
+        });
     } catch (err) {
       console.error('Failed to send message:', err);
-      setIsStreaming(false);
-      setStreamingContent('');
-      setStreamingAttachments([]);
-      setToolStatus(null);
+      finished = true;
+      resetStream();
+      setError('Unable to connect. Please try again.');
+      if (err instanceof signalR.HttpError && err.statusCode === 401) onAuthErrorRef.current?.();
       connection.stop().catch(e => console.error('Error stopping connection:', e));
     }
   }, []);
@@ -139,6 +160,8 @@ export function useChat() {
     streamingContent,
     streamingAttachments,
     toolStatus,
+    streamingConversationId,
+    error,
     setOnStreamComplete,
     setOnAuthError,
   };

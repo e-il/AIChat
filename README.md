@@ -16,7 +16,7 @@ A modern AI chat application built with React TypeScript frontend and ASP.NET Co
 AIChat/
 ├── backend/
 │   └── AIChat.Api/          # ASP.NET Core Web API
-│       ├── Controllers/     # REST API endpoints (Conversations, Models)
+│       ├── Controllers/     # Models, memory, prompt profiles, media
 │       ├── Hubs/           # SignalR hub for streaming
 │       ├── Models/         # Data models
 │       └── Services/       # Business logic & Azure OpenAI
@@ -33,26 +33,26 @@ AIChat/
 
 ## Prerequisites
 
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download) or later
-- [Node.js 18+](https://nodejs.org/)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [Node.js 22.12+](https://nodejs.org/)
 - Azure OpenAI resource with deployed models
 
 ## Configuration
 
 ### Backend Configuration
 
-Copy `backend/AIChat.Api/config/azure-openai.example.json` to `backend/AIChat.Api/config/azure-openai.json` and fill in your Azure OpenAI credentials:
+Supply credentials through process environment variables only:
 
-```json
-{
-  "AzureOpenAI": {
-    "Endpoint": "https://YOUR-RESOURCE.openai.azure.com/",
-    "ApiKey": "YOUR-API-KEY"
-  }
-}
-```
+| Setting | Standard .NET name | Alternative name |
+|---------|--------------------|------------------|
+| Endpoint | `AzureOpenAI__Endpoint` | `AZURE_OPENAI_ENDPOINT` |
+| API key | `AzureOpenAI__ApiKey` | `AZURE_OPENAI_API_KEY` |
 
-**Note:** Add your deployed model names to `backend/AIChat.Api/config/models.json`. The `DeploymentName` should match your Azure OpenAI deployment name.
+The standard name takes precedence when both are set. JSON credentials are not loaded as a fallback. Direct `dotnet run` does not automatically load a `.env` file; configure its process environment first. Docker Compose maps the alternative variables into the standard names.
+
+Set model IDs and Azure deployment names in [backend/AIChat.Api/config/models.json](backend/AIChat.Api/config/models.json). The application writes only this model catalog, with atomic replacement. Keys and endpoints are absent from the persisted catalog type. Other required JSON configuration files remain read-only application inputs. Authentication requires a configured access code; do not use production credentials in automated tests.
+
+Model settings refresh after catalog changes. User/authentication mappings and other startup-only options require a process restart when edited.
 
 ## Getting Started
 
@@ -83,12 +83,14 @@ Navigate to `http://localhost:5173` in your browser.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/conversations` | List all conversations |
-| POST | `/api/conversations` | Create new conversation |
-| GET | `/api/conversations/{id}` | Get conversation with messages |
-| DELETE | `/api/conversations/{id}` | Delete conversation |
 | GET | `/api/models` | Get available AI models |
+| PUT / DELETE | `/api/models`, `/api/models/{id}` | Admin model catalog changes |
+| GET / POST | `/api/memory` | List or create user memories |
+| PUT | `/api/memory/conversations/{id}/mode` | Enable/disable memory use and collection |
+| GET | `/api/promptprofiles` | Built-in prompt profiles |
 | SignalR | `/chathub` | Real-time streaming (on-demand) |
+
+Conversation CRUD and message persistence are local IndexedDB operations, not backend endpoints.
 
 ## Architecture Highlights
 
@@ -96,12 +98,18 @@ Navigate to `http://localhost:5173` in your browser.
 The application creates SignalR connections only when streaming messages, and disconnects immediately after completion. This saves server resources by not maintaining persistent connections.
 
 ### Multi-Model Support
-Users can switch between different Azure OpenAI models from the header dropdown. The selected model is passed with each message request.
+Users can switch between available chat models from the input toolbar. The selected model is passed with each message request.
+
+### Memory Controls
+
+Turning memory off cancels pending/queued extraction and excludes disabled-period history from later collection, including after re-enabling. Existing memories are not deleted. Requests already sent to a model provider cannot be recalled; cancellation is cooperative. If a required exclusion boundary is missing from supplied history, extraction is skipped rather than guessing.
+
+Both Compose configurations persist memory, exclusion checkpoints, and pending snapshots. Before replacing existing containers, back up and migrate any old `data/extraction` or `data/pending` files into their new named volumes; adding a volume does not import the previous container's files. Do not remove volumes during routine upgrades.
 
 ## Technology Stack
 
 ### Frontend
-- React 18 with TypeScript
+- React 19 with TypeScript
 - Vite for build tooling
 - Tailwind CSS for styling
 - SignalR client for real-time communication
@@ -109,18 +117,28 @@ Users can switch between different Azure OpenAI models from the header dropdown.
 - React Markdown for message rendering
 
 ### Backend
-- ASP.NET Core 8
+- ASP.NET Core 10
 - SignalR for WebSocket connections
 - Azure.AI.OpenAI SDK
-- In-memory conversation storage
+- Browser-owned conversation history and per-user JSON memory storage
 
 ## Design System
 
 | Element | Value |
 |---------|-------|
-| Primary Color | `#2563EB` |
-| Font | Inter |
-| Style | AI-Native UI |
+| Primary Color | `#BF4435` |
+| Fonts | Space Grotesk / DM Sans |
+| Style | Graphite and paper-white workspace |
+
+## Development Checks
+
+```sh
+dotnet test backend/AIChat.Api.Tests/AIChat.Api.Tests.csproj
+npm --prefix frontend run build
+npm --prefix frontend run lint
+```
+
+See [frontend/TESTING.md](frontend/TESTING.md) for isolated browser regression, [AGENTS.md](AGENTS.md) for shared agent instructions, and [REVIEW.md](REVIEW.md) for review findings and resolution status.
 
 ## License
 

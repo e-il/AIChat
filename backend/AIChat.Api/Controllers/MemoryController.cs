@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using AIChat.Api.Middleware;
 using AIChat.Api.Models;
 using AIChat.Api.Services;
+using System.ComponentModel.DataAnnotations;
 
 namespace AIChat.Api.Controllers;
 
@@ -10,10 +11,12 @@ namespace AIChat.Api.Controllers;
 public class MemoryController : ControllerBase
 {
     private readonly IMemoryService _memory;
+    private readonly IdleExtractionScheduler _scheduler;
 
-    public MemoryController(IMemoryService memory)
+    public MemoryController(IMemoryService memory, IdleExtractionScheduler scheduler)
     {
         _memory = memory;
+        _scheduler = scheduler;
     }
 
     private string UserId =>
@@ -24,6 +27,16 @@ public class MemoryController : ControllerBase
     public async Task<ActionResult<List<Memory>>> GetAll()
     {
         return Ok(await _memory.GetAllAsync(UserId));
+    }
+
+    [HttpPut("conversations/{conversationId:guid}/mode")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> SetConversationMode(Guid conversationId, [FromBody] UpdateConversationMemoryRequest request, CancellationToken cancellationToken)
+    {
+        await _scheduler.SetMemoryModeAsync(UserId, conversationId.ToString(), request.Enabled, request.LastMessageId, cancellationToken);
+        return NoContent();
     }
 
     [HttpGet("{id}")]
@@ -89,4 +102,12 @@ public class RetrieveMemoryRequest
 {
     public string Query { get; set; } = "";
     public int? Limit { get; set; }
+}
+
+/// <summary>Controls memory use and extraction for one conversation without deleting existing memories.</summary>
+public sealed record UpdateConversationMemoryRequest
+{
+    public required bool Enabled { get; init; }
+    [MaxLength(128)]
+    public string? LastMessageId { get; init; }
 }

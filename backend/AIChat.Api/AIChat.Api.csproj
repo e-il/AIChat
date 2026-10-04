@@ -15,6 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="AIChat.Api.Tests" />
     <Content Update="config\**\*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

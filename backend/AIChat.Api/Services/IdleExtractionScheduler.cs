@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Options;
 using AIChat.Api.Models;
+using Microsoft.Extensions.Options;
 
 namespace AIChat.Api.Services;
 
@@ -19,27 +19,28 @@ public class IdleExtractionScheduler
     private static readonly TimeSpan MinRescheduleDelay = TimeSpan.FromSeconds(5);
 
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _timers = new();
+    private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly PendingExtractionStore _store;
     private readonly IExtractionCheckpointService _checkpoint;
     private readonly IExtractionQueue _queue;
-    private readonly MemorySettings _settings;
+    private readonly IOptions<MemorySettings> _configuration;
     private readonly ILogger<IdleExtractionScheduler> _logger;
 
     public IdleExtractionScheduler(
         PendingExtractionStore store,
         IExtractionCheckpointService checkpoint,
         IExtractionQueue queue,
-        IOptions<MemorySettings> settings,
+        IOptions<MemorySettings> configuration,
         ILogger<IdleExtractionScheduler> logger)
     {
         _store = store;
         _checkpoint = checkpoint;
         _queue = queue;
-        _settings = settings.Value;
+        _configuration = configuration;
         _logger = logger;
     }
 
-    private TimeSpan IdleDelay => TimeSpan.FromSeconds(Math.Max(1, _settings.IdleExtractionSeconds));
+    private TimeSpan IdleDelay => TimeSpan.FromSeconds(Math.Max(1, _configuration.Value.IdleExtractionSeconds));
 
     private static string Key(string userId, string conversationId) => $"{userId}|{conversationId}";
 
@@ -49,11 +50,53 @@ public class IdleExtractionScheduler
     /// </summary>
     public async Task ScheduleAsync(string userId, string conversationId, List<ChatMessage> messages)
     {
-        await _store.SaveAsync(userId, conversationId, messages);
-        StartTimer(userId, conversationId, IdleDelay);
+        await _gate.WaitAsync();
+        try
+        {
+            var checkpoint = await _checkpoint.GetAsync(userId, conversationId);
+            var eligible = FilterEligibleMessages(messages, checkpoint);
+            if (eligible.Count == 0) return;
+            await _store.SaveAsync(userId, conversationId, eligible);
+            StartTimer(userId, conversationId, IdleDelay);
+        }
+        finally { _gate.Release(); }
     }
 
     public async Task CancelAsync(string userId, string conversationId, string? advanceCheckpointToMessageId = null)
+    {
+        await SetMemoryModeAsync(userId, conversationId, false, advanceCheckpointToMessageId);
+    }
+
+    public async Task SetMemoryModeAsync(string userId, string conversationId, bool enabled, string? lastMessageId = null, CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!enabled)
+            {
+                _queue.Cancel(userId, conversationId);
+                await CancelPendingAsync(userId, conversationId);
+            }
+            await _checkpoint.SetMemoryModeAsync(userId, conversationId, enabled, lastMessageId);
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task CommitAsync(ExtractionJob job, Func<Task> commit, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            job.Cancellation.Token.ThrowIfCancellationRequested();
+            var checkpoint = await _checkpoint.GetAsync(job.UserId, job.ConversationId);
+            if (checkpoint?.MemoryDisabled == true) return;
+            await commit();
+        }
+        finally { _gate.Release(); }
+    }
+
+    private async Task CancelPendingAsync(string userId, string conversationId)
     {
         var key = Key(userId, conversationId);
         if (_timers.TryRemove(key, out var cts))
@@ -63,15 +106,7 @@ public class IdleExtractionScheduler
         }
 
         await _store.RemoveAsync(userId, conversationId);
-        if (!string.IsNullOrWhiteSpace(advanceCheckpointToMessageId))
-        {
-            await _checkpoint.SetAsync(userId, conversationId, advanceCheckpointToMessageId);
-        }
-
-        _logger.LogInformation(
-            "Idle extraction cancelled for conversation {ConversationId}, checkpointAdvanced={CheckpointAdvanced}",
-            conversationId,
-            !string.IsNullOrWhiteSpace(advanceCheckpointToMessageId));
+        _logger.LogInformation("Idle extraction cancelled for conversation {ConversationId}", conversationId);
     }
 
     /// <summary>
@@ -90,7 +125,7 @@ public class IdleExtractionScheduler
 
         _logger.LogInformation(
             "IdleExtractionScheduler reloaded {Count} pending conversation(s) (idle={IdleSeconds}s)",
-            all.Count, _settings.IdleExtractionSeconds);
+            all.Count, _configuration.Value.IdleExtractionSeconds);
     }
 
     /// <summary>
@@ -156,24 +191,30 @@ public class IdleExtractionScheduler
 
     private async Task FireAsync(string userId, string conversationId)
     {
-        var pending = await _store.GetAsync(userId, conversationId);
-        if (pending is null) return;
-
+        await _gate.WaitAsync();
         try
         {
-            await TryQueueAsync(userId, conversationId, pending.Messages);
+            var pending = await _store.GetAsync(userId, conversationId);
+            if (pending is null) return;
+
+            try
+            {
+                await TryQueueAsync(userId, conversationId, pending.Messages);
+            }
+            finally
+            {
+                // The snapshot has been consumed; the client re-supplies the full list on any
+                // future turn, and the persisted checkpoint prevents re-extracting old messages.
+                await _store.RemoveAsync(userId, conversationId);
+            }
         }
-        finally
-        {
-            // The snapshot has been consumed; the client re-supplies the full list on any
-            // future turn, and the persisted checkpoint prevents re-extracting old messages.
-            await _store.RemoveAsync(userId, conversationId);
-        }
+        finally { _gate.Release(); }
     }
 
     private async Task TryQueueAsync(string userId, string conversationId, List<ChatMessage> messages)
     {
         var checkpoint = await _checkpoint.GetAsync(userId, conversationId);
+        if (checkpoint?.MemoryDisabled == true) return;
         var unextracted = GetUnextractedMessages(messages, checkpoint?.LastExtractedMessageId);
 
         if (unextracted.Count == 0)
@@ -197,13 +238,13 @@ public class IdleExtractionScheduler
             return;
         }
 
-        if (textOnly.Count < _settings.MinMessagesToExtract)
+        if (textOnly.Count < _configuration.Value.MinMessagesToExtract)
         {
             // Too little new content to bother. Leave the checkpoint unadvanced so these
             // messages are reconsidered (together with future turns) on the next idle flush.
             _logger.LogDebug(
                 "Idle extraction skipped: {Count} new text messages < minimum {Min} for conversation {ConversationId}",
-                textOnly.Count, _settings.MinMessagesToExtract, conversationId);
+                textOnly.Count, _configuration.Value.MinMessagesToExtract, conversationId);
             return;
         }
 
@@ -235,5 +276,14 @@ public class IdleExtractionScheduler
         if (idx < 0) return messages;
 
         return messages.Skip(idx + 1).ToList();
+    }
+
+    private static List<ChatMessage> FilterEligibleMessages(List<ChatMessage> messages, ExtractionCheckpoint? checkpoint)
+    {
+        if (checkpoint?.MemoryDisabled == true) return new();
+        if (string.IsNullOrEmpty(checkpoint?.SuppressedThroughMessageId)) return messages;
+        var boundary = messages.FindIndex(message => message.Id == checkpoint.SuppressedThroughMessageId);
+        if (boundary < 0) return new();
+        return messages.Skip(boundary + 1).SkipWhile(message => message.Role != "user").ToList();
     }
 }

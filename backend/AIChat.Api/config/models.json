@@ -3,6 +3,7 @@
     "Models": [
       { "Id": "gpt-4o", "Name": "GPT-4o", "DeploymentName": "gpt-4o", "Kind": "chat" },
       { "Id": "gpt-5.4", "Name": "GPT-5.4", "DeploymentName": "gpt-5.4", "Kind": "chat" },
+      { "Id": "gpt-6-astra", "Name": "GPT-6 Astra", "DeploymentName": "gpt-6-astra", "Kind": "chat" },
       { "Id": "gpt-image-2", "Name": "GPT Image 2", "DeploymentName": "gpt-image-2", "Kind": "image" },
       { "Id": "sora-2", "Name": "Sora 2", "DeploymentName": "sora-2", "Kind": "video" }
     ],

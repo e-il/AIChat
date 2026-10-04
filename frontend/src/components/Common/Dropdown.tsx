@@ -15,6 +15,7 @@ interface DropdownProps<T> {
   title?: string;
   className?: string;
   icon?: ReactNode;
+  placement?: 'top' | 'bottom';
 }
 
 export function Dropdown<T>({
@@ -25,6 +26,7 @@ export function Dropdown<T>({
   title,
   className = '',
   icon,
+  placement = 'bottom',
 }: DropdownProps<T>) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -65,11 +67,13 @@ export function Dropdown<T>({
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
         title={title}
+        aria-label={title}
+        aria-expanded={isOpen}
         className={`
           flex items-center justify-center gap-2 text-[0.75rem] font-semibold
           ${isIconOnly 
             ? 'p-2 hover:bg-surface-container rounded-lg' 
-            : 'px-3 py-1.5 bg-surface-container-high hover:bg-surface-container-highest rounded-full'
+            : 'px-3 py-2 border border-outline-variant/30 hover:bg-surface-container rounded-md max-w-full'
           }
           transition-all duration-150 ease-out
           cursor-pointer select-none group
@@ -82,7 +86,7 @@ export function Dropdown<T>({
           icon
         ) : (
           <>
-            <span className="text-on-surface">{selectedOption?.label}</span>
+            <span className="text-on-surface truncate">{selectedOption?.label || title}</span>
             <ChevronDown 
               size={14} 
               className={`text-on-surface-variant transition-transform duration-200 group-hover:translate-y-0.5 ${isOpen ? 'rotate-180' : ''}`} 
@@ -94,12 +98,7 @@ export function Dropdown<T>({
       {/* Dropdown Menu */}
       {isOpen && (
         <div 
-          className="
-            absolute right-0 mt-2 min-w-[120px] w-max
-            bg-surface-container-lowest rounded-xl
-            py-1 z-50
-            origin-top-right
-          "
+          className={`absolute ${placement === 'top' ? 'bottom-full left-0 mb-2' : 'right-0 mt-2'} min-w-[160px] w-max max-w-[min(320px,calc(100vw-48px))] max-h-72 overflow-y-auto border border-outline-variant/25 bg-surface-container-lowest rounded-md py-1 z-50`}
           style={{
             boxShadow: '0 4px 24px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.08)',
             animation: 'dropdownFadeIn 150ms ease-out'
@@ -132,7 +131,7 @@ export function Dropdown<T>({
                     ${isSelected ? 'bg-primary' : 'bg-transparent'}
                   `} 
                 />
-                <span className={isSelected ? 'font-semibold' : 'font-medium'}>
+                <span className={`min-w-0 break-words ${isSelected ? 'font-semibold' : 'font-medium'}`}>
                   {option.label}
                 </span>
               </button>

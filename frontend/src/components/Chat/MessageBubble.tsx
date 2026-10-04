@@ -1,11 +1,12 @@
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { PrismAsyncLight as SyntaxHighlighter } from 'react-syntax-highlighter';
+import vs from 'react-syntax-highlighter/dist/esm/styles/prism/vs';
 import { Copy, Check, Sparkles, Brain, ImageIcon, Loader2, Film } from 'lucide-react';
 import { useState } from 'react';
 import type { Memory, Message, MessageAttachment } from '../../types';
 import { imagesApi } from '../../services/imagesApi';
+import { Dialog } from '../Common/Dialog';
 
 interface CodeBlockProps {
   language: string;
@@ -46,8 +47,8 @@ function CodeBlock({ language, children }: CodeBlockProps) {
           padding: '1rem',
           fontSize: '13px',
           lineHeight: '1.6',
-          background: '#f0f4f7',
-          borderRadius: '0 0 0.75rem 0.75rem',
+          background: '#f4f4f1',
+          borderRadius: '0 0 6px 6px',
         }}
         showLineNumbers={children.split('\n').length > 3}
         lineNumberStyle={{ color: '#9ca3af', paddingRight: '1rem', minWidth: '2.5rem' }}
@@ -60,6 +61,9 @@ function CodeBlock({ language, children }: CodeBlockProps) {
 
 // Shared markdown components config - Ethereal style
 const markdownComponents: Components = {
+  pre({ children }) {
+    return <>{children}</>;
+  },
   code({ className, children, ...props }) {
     const match = /language-(\w+)/.exec(className || '');
     const isInline = !match && !String(children).includes('\n');
@@ -173,19 +177,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   if (isUser) {
     // User message - right aligned with gradient
     return (
-      <div className="flex flex-row-reverse gap-4 group">
-        <div className="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden self-start mt-1
-                        bg-gradient-to-br from-primary to-primary-container flex items-center justify-center">
-          <span className="text-white text-sm font-semibold">U</span>
-        </div>
-        <div className="flex flex-col gap-2 max-w-[85%] items-end">
+      <div className="flex flex-row-reverse gap-3 group">
+        <div className="flex flex-col gap-2 min-w-0 max-w-[90%] items-end">
           {attachments.length > 0 && (
             <AttachmentGrid attachments={attachments} alignment="right" />
           )}
           {hasContent && (
-            <div className="bg-gradient-to-br from-primary to-primary-container text-on-primary
-                            p-4 rounded-xl rounded-br-sm shadow-md">
-              <p className="text-sm leading-relaxed font-body whitespace-pre-wrap">{message.content}</p>
+            <div className="bg-surface-container text-on-surface px-5 py-3 rounded-lg border border-outline-variant/15">
+              <p className="text-sm leading-relaxed font-body whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.content}</p>
             </div>
           )}
           <span className="text-[0.6875rem] text-on-surface-variant font-medium mr-1">
@@ -198,14 +197,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 
   // AI message - left aligned with surface background
   return (
-    <div className="flex gap-4 group">
-      <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-surface-container-highest
-                      flex items-center justify-center text-primary self-start mt-1">
-        <Sparkles size={18} className="fill-primary" />
+    <div className="flex gap-3 md:gap-4 group">
+      <div className="flex-shrink-0 w-8 h-8 rounded-md bg-[#272b27] flex items-center justify-center text-[#ef846e] self-start mt-1">
+        <Sparkles size={16} />
       </div>
-      <div className="flex flex-col gap-2 max-w-[85%]">
+      <div className="flex flex-col gap-2 min-w-0 flex-1">
+        <span className="font-headline text-xs font-semibold pt-2">AIChat</span>
         {hasContent && (
-          <div className="bg-surface-container-high text-on-surface p-4 rounded-xl rounded-bl-sm relative">
+          <div className="text-on-surface py-1 relative min-w-0">
             <div className="markdown-content text-sm leading-relaxed font-body">
               <ReactMarkdown components={markdownComponents}>
                 {message.content}
@@ -222,8 +221,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </span>
           <button
             onClick={handleCopyMessage}
+            title={copied ? 'Copied' : 'Copy message'}
             className="p-1 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container
-                       opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                       lg:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all cursor-pointer"
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
           </button>
@@ -342,17 +342,15 @@ function VideoAttachmentView({ attachment }: { attachment: MessageAttachment }) 
 
 function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
   return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6 cursor-zoom-out"
-    >
+    <Dialog open onClose={onClose} label="Image preview" className="max-w-5xl">
+      <button onClick={onClose} title="Close image preview" className="absolute right-3 top-3 z-10 bg-white text-on-surface px-3 py-1 text-xs">Close</button>
       <img
         src={src}
         alt={alt}
-        className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+        className="w-full max-h-[85dvh] object-contain bg-surface-container"
         onClick={e => e.stopPropagation()}
       />
-    </div>
+    </Dialog>
   );
 }
 
@@ -395,14 +393,14 @@ interface StreamingBubbleProps {
 export function StreamingBubble({ content, attachments, toolStatus }: StreamingBubbleProps) {
   const hasContent = content.length > 0;
   return (
-    <div className="flex gap-4">
-      <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-surface-container-highest
-                      flex items-center justify-center text-primary self-start mt-1">
-        <Sparkles size={18} className="fill-primary animate-pulse" />
+    <div className="flex gap-3 md:gap-4">
+      <div className="flex-shrink-0 w-8 h-8 rounded-md bg-[#272b27] flex items-center justify-center text-[#ef846e] self-start mt-1">
+        <Sparkles size={16} className="animate-pulse" />
       </div>
-      <div className="flex flex-col gap-2 max-w-[85%]">
+      <div className="flex flex-col gap-2 min-w-0 flex-1">
+        <span className="font-headline text-xs font-semibold pt-2">AIChat</span>
         {hasContent && (
-          <div className="bg-surface-container-high text-on-surface p-4 rounded-xl rounded-bl-sm">
+          <div className="text-on-surface py-1 min-w-0">
             <div className="markdown-content text-sm leading-relaxed font-body">
               <ReactMarkdown components={markdownComponents}>
                 {content}

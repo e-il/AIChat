@@ -42,13 +42,18 @@ public class ExtractionWorker : BackgroundService
         {
             try
             {
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, job.Cancellation.Token);
                 cts.CancelAfter(JobTimeout);
+                cts.Token.ThrowIfCancellationRequested();
                 await ProcessJobAsync(job, cts.Token);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 throw; // shutting down
+            }
+            catch (OperationCanceledException) when (job.Cancellation.IsCancellationRequested)
+            {
+                _logger.LogInformation("Extraction cancelled for conversation {ConversationId}", job.ConversationId);
             }
             catch (Exception ex)
             {
@@ -57,7 +62,7 @@ public class ExtractionWorker : BackgroundService
             }
             finally
             {
-                _queue.Release(job.ConversationId);
+                _queue.Release(job);
             }
         }
 
@@ -84,50 +89,54 @@ public class ExtractionWorker : BackgroundService
             .ToHashSet(StringComparer.Ordinal);
 
         var extracted = await _openAI.ExtractMemoriesAsync(job.Messages, existingMemories, ct);
-        var created = 0;
-        var updated = 0;
-        var skipped = 0;
-        foreach (var item in extracted)
+        await _scheduler.CommitAsync(job, async () =>
         {
-            var content = item.Content.Trim();
-            var normalized = NormalizeMemoryContent(content);
-            if (normalized.Length == 0 || seen.Contains(normalized))
+            var created = 0;
+            var updated = 0;
+            var skipped = 0;
+            foreach (var item in extracted)
             {
-                skipped++;
-                continue;
-            }
-
-            if (!string.IsNullOrWhiteSpace(item.ExistingMemoryId)
-                && existingById.TryGetValue(item.ExistingMemoryId, out var existing))
-            {
-                var updatedMemory = await _memory.UpdateAsync(job.UserId, existing.Id, item.Type, content);
-                if (updatedMemory is null)
+                ct.ThrowIfCancellationRequested();
+                var content = item.Content.Trim();
+                var normalized = NormalizeMemoryContent(content);
+                if (normalized.Length == 0 || seen.Contains(normalized))
                 {
                     skipped++;
                     continue;
                 }
 
+                if (!string.IsNullOrWhiteSpace(item.ExistingMemoryId)
+                    && existingById.TryGetValue(item.ExistingMemoryId, out var existing))
+                {
+                    var updatedMemory = await _memory.UpdateAsync(job.UserId, existing.Id, item.Type, content);
+                    if (updatedMemory is null)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    seen.Add(normalized);
+                    updated++;
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(item.ExistingMemoryId))
+                {
+                    _logger.LogWarning("Extraction returned unknown existingMemoryId={MemoryId}; creating as new if not duplicate",
+                        item.ExistingMemoryId);
+                }
+
+                await _memory.CreateAsync(job.UserId, item.Type, content, job.ConversationId);
                 seen.Add(normalized);
-                updated++;
-                continue;
+                created++;
             }
 
-            if (!string.IsNullOrWhiteSpace(item.ExistingMemoryId))
-            {
-                _logger.LogWarning("Extraction returned unknown existingMemoryId={MemoryId}; creating as new if not duplicate",
-                    item.ExistingMemoryId);
-            }
+            await _checkpoint.SetAsync(job.UserId, job.ConversationId, job.LastMessageId);
 
-            await _memory.CreateAsync(job.UserId, item.Type, content, job.ConversationId);
-            seen.Add(normalized);
-            created++;
-        }
-
-        await _checkpoint.SetAsync(job.UserId, job.ConversationId, job.LastMessageId);
-
-        _logger.LogInformation(
-            "Extraction complete: user={UserId}, conversation={ConversationId}, created={Created}, updated={Updated}, skipped={Skipped}",
-            job.UserId, job.ConversationId, created, updated, skipped);
+            _logger.LogInformation(
+                "Extraction complete: user={UserId}, conversation={ConversationId}, created={Created}, updated={Updated}, skipped={Skipped}",
+                job.UserId, job.ConversationId, created, updated, skipped);
+        }, ct);
     }
 
     private static string NormalizeMemoryContent(string content)

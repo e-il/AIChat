@@ -1,0 +1,11 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/backend/">
+    <Project Path="backend/AIChat.Api.Tests/AIChat.Api.Tests.csproj" />
+    <Project Path="backend/AIChat.Api/AIChat.Api.csproj" />
+  </Folder>
+</Solution>

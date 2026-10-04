@@ -10,7 +10,6 @@ var builder = WebApplication.CreateBuilder(args);
 // Additional config files. Env vars are re-registered after so they continue to win.
 builder.Configuration
     .AddJsonFile("config/users.json", optional: false, reloadOnChange: true)
-    .AddJsonFile("config/azure-openai.json", optional: true, reloadOnChange: true)
     .AddJsonFile("config/models.json", optional: false, reloadOnChange: true)
     .AddJsonFile("config/memory.json", optional: false, reloadOnChange: true)
     .AddJsonFile("config/prompt-profiles.json", optional: false, reloadOnChange: true)
@@ -40,6 +39,7 @@ builder.Services.AddSignalR(options =>
 });
 
 // Register application services
+builder.Services.Configure<List<AIChat.Api.Models.UserConfig>>(builder.Configuration.GetSection("Users"));
 builder.Services.AddSingleton<IUserIdentityService, UserIdentityService>();
 builder.Services.AddAzureOpenAI(builder.Configuration);
 builder.Services.AddPromptProfiles(builder.Configuration);

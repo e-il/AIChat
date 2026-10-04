@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Menu, History, Brain, BrainCircuit, Settings } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Menu, History, Brain, BrainCircuit, Settings, SlidersHorizontal } from 'lucide-react';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatArea } from './components/Chat/ChatArea';
 import { ChatInput } from './components/Input/ChatInput';
@@ -7,9 +7,11 @@ import { AuthCodeModal } from './components/Auth/AuthCodeModal';
 import { MemoryPanel } from './components/Memory/MemoryPanel';
 import { PromptProfilesPanel } from './components/PromptProfiles/PromptProfilesPanel';
 import { Dropdown } from './components/Common/Dropdown';
+import { ModelsPanel } from './components/Models/ModelsPanel';
 import { useConversations } from './hooks/useConversations';
 import { useChat } from './hooks/useChat';
 import { chatApi } from './services/chatApi';
+import { memoryApi } from './services/memoryApi';
 import { hasAuthCode, setAuthCode, clearAuthCode } from './services/auth';
 import { getConversationSettings, saveConversationSettings, deleteConversationSettings } from './services/settings';
 import {
@@ -26,7 +28,11 @@ import './index.css';
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [draft, setDraft] = useState('');
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [allModels, setAllModels] = useState<ModelInfo[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [defaultModel, setDefaultModel] = useState<string>('');
   const [defaultContextSize, setDefaultContextSize] = useState(100000);
@@ -35,6 +41,8 @@ function App() {
   const [defaultMaxMessages, setDefaultMaxMessages] = useState(50);
   const [currentMaxMessages, setCurrentMaxMessages] = useState(50);
   const [memoryMode, setMemoryMode] = useState<MemoryMode>('auto');
+  const [memoryModeSaving, setMemoryModeSaving] = useState(false);
+  const [memoryModeError, setMemoryModeError] = useState<{ conversationId: string; message: string } | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(!hasAuthCode());
   const [isAuthenticated, setIsAuthenticated] = useState(hasAuthCode());
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -56,12 +64,17 @@ function App() {
     addMessage,
   } = useConversations();
 
+  const activeConversationIdRef = useRef(activeConversation?.id);
+  useEffect(() => { activeConversationIdRef.current = activeConversation?.id; }, [activeConversation?.id]);
+
   const {
     sendMessage,
     isStreaming,
     streamingContent,
     streamingAttachments,
     toolStatus,
+    streamingConversationId,
+    error: chatError,
     setOnStreamComplete,
     setOnAuthError,
   } = useChat();
@@ -90,6 +103,7 @@ function App() {
 
     chatApi.getModels().then(response => {
       setModels(response.models);
+      setAllModels(response.allModels ?? response.models);
       setDefaultModel(response.defaultModel);
       setSelectedModel(response.defaultModel);
       setDefaultContextSize(response.defaultContextSize);
@@ -97,6 +111,7 @@ function App() {
       setMaxMessagesOptions(response.maxMessagesOptions);
       setDefaultMaxMessages(response.defaultMaxMessages);
       setCurrentMaxMessages(response.defaultMaxMessages);
+      setIsAdmin(response.isAdmin);
     }).catch(err => {
       console.error('Failed to load models:', err);
       if (err.message === 'AUTH_REQUIRED') {
@@ -116,6 +131,15 @@ function App() {
 
     loadConversations();
   }, [isAuthenticated, handleAuthError, loadConversations]);
+
+  const reloadModels = useCallback(async () => {
+    const response = await chatApi.getModels();
+      setModels(response.models);
+      setAllModels(response.allModels ?? response.models);
+      setDefaultModel(response.defaultModel);
+      setSelectedModel(current => response.models.some(model => model.id === current) ? current : response.defaultModel);
+      setIsAdmin(response.isAdmin);
+  }, []);
 
   const promptProfiles = useMemo(
     () => mergePromptProfiles(builtInPromptProfiles, customPromptProfiles),
@@ -229,10 +253,23 @@ function App() {
     saveActiveConversationSettings({ maxMessages: count });
   };
 
-  const handleMemoryModeToggle = () => {
+  const handleMemoryModeToggle = async () => {
     const next: MemoryMode = memoryMode === 'off' ? 'auto' : 'off';
-    setMemoryMode(next);
-    saveActiveConversationSettings({ memoryMode: next });
+    if (!activeConversation) { setMemoryMode(next); return; }
+    const conversationId = activeConversation.id;
+    setMemoryModeSaving(true);
+    setMemoryModeError(null);
+    try {
+      await memoryApi.setConversationMode(conversationId, next !== 'off', activeConversation.messages.at(-1)?.id);
+      saveConversationSettings(conversationId, {
+        ...getConversationSettings(conversationId, defaultContextSize, defaultMaxMessages),
+        memoryMode: next,
+      });
+      if (activeConversationIdRef.current === conversationId) setMemoryMode(next);
+    } catch (cause) {
+      if (cause instanceof Error && cause.message === 'AUTH_REQUIRED') handleAuthError();
+      setMemoryModeError({ conversationId, message: 'Unable to update conversation memory. Please try again.' });
+    } finally { setMemoryModeSaving(false); }
   };
 
   const handlePromptProfileChange = (profileId: string) => {
@@ -320,7 +357,7 @@ function App() {
   const selectedModelName = models.find(m => m.id === selectedModel)?.name || '';
 
   return (
-    <div className="flex h-screen w-full bg-surface">
+    <div className="workspace-shell flex w-full bg-surface">
       {/* Auth Modal */}
       {showAuthModal && (
         <AuthCodeModal onSubmit={handleAuthSubmit} />
@@ -349,34 +386,33 @@ function App() {
         onSaveCustomProfile={handleSaveCustomPromptProfile}
         onDeleteCustomProfile={handleDeleteCustomPromptProfile}
       />
+      <ModelsPanel open={modelsOpen} models={allModels} onClose={() => setModelsOpen(false)} onChanged={reloadModels} />
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 relative">
         {/* TopAppBar - Glassmorphic Header */}
-        <header className="sticky top-0 flex justify-between items-center px-6 py-3
-                           bg-white/80 backdrop-blur-xl shadow-sm z-30
-                           border-b border-slate-200/50">
-          <div className="flex items-center gap-4">
+        <header className="workspace-header flex flex-wrap justify-between items-center gap-3 px-5 md:px-8 py-4 z-30 border-b border-outline-variant/25">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             {/* Mobile menu button */}
             <button
               onClick={() => setSidebarOpen(true)}
+              aria-label="Open navigation"
+              title="Open navigation"
               className="lg:hidden p-2 hover:bg-surface-container rounded-lg transition-colors cursor-pointer"
             >
               <Menu size={20} className="text-on-surface-variant" />
             </button>
 
-            {/* Accent bar */}
-            <div className="hidden sm:block h-8 w-[2px] bg-primary/20 rounded-full" />
+            {isAdmin && <button onClick={() => setModelsOpen(true)} title="Manage models" className="flex h-9 w-9 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-primary"><SlidersHorizontal size={17}/></button>}
 
             {/* Title */}
-            <h2 className="font-headline text-lg font-bold text-slate-900 truncate">
-              {activeConversation?.title || 'New Chat'}
+            <h2 className="font-headline text-sm font-medium text-on-surface truncate">
+              {activeConversation?.title || 'New conversation'}
             </h2>
 
             {/* Model name badge */}
             {selectedModelName && (
-              <span className="px-2.5 py-1 text-[0.65rem] font-semibold text-primary bg-primary/10
-                               rounded-full whitespace-nowrap">
+              <span className="hidden xl:inline-flex px-2 py-1 text-[10px] text-on-surface-variant border border-outline-variant/30 rounded whitespace-nowrap max-w-40 truncate">
                 {selectedModelName}
               </span>
             )}
@@ -407,8 +443,12 @@ function App() {
             {/* Memory mode toggle */}
             <button
               onClick={handleMemoryModeToggle}
-              disabled={isStreaming}
-              title={memoryMode === 'off' ? 'Memory off — click to enable' : 'Memory on — click to disable for this chat'}
+              role="switch"
+              aria-checked={memoryMode !== 'off'}
+              aria-label="Conversation memory"
+              disabled={isStreaming || memoryModeSaving}
+              aria-busy={memoryModeSaving}
+              title={memoryMode === 'off' ? 'Memory use and collection are off' : 'Memory use and collection are on'}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold
                           transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed
                           ${memoryMode === 'off'
@@ -416,7 +456,7 @@ function App() {
                             : 'bg-primary/10 text-primary hover:bg-primary/15'}`}
             >
               {memoryMode === 'off' ? <Brain size={14} /> : <BrainCircuit size={14} />}
-              <span>{memoryMode === 'off' ? 'Memory off' : 'Memory'}</span>
+              <span className="hidden sm:inline">Memory</span><span className={`relative w-6 h-3.5 rounded-full ${memoryMode === 'off' ? 'bg-outline-variant' : 'bg-primary'}`}><span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-all ${memoryMode === 'off' ? 'left-0.5' : 'left-3'}`} /></span>
             </button>
 
             {/* Max Messages / History Button */}
@@ -434,17 +474,23 @@ function App() {
         {/* Chat Area */}
         <ChatArea
           messages={activeConversation?.messages || []}
-          streamingContent={streamingContent}
-          streamingAttachments={streamingAttachments}
-          toolStatus={toolStatus}
-          isStreaming={isStreaming}
+          streamingContent={streamingConversationId === activeConversation?.id ? streamingContent : ''}
+          streamingAttachments={streamingConversationId === activeConversation?.id ? streamingAttachments : []}
+          toolStatus={streamingConversationId === activeConversation?.id ? toolStatus : null}
+          isStreaming={isStreaming && streamingConversationId === activeConversation?.id}
           isLoading={isLoading}
+          onSuggestion={message => { setDraft(message); document.getElementById('chat-message')?.focus(); }}
         />
+
+        {chatError && streamingConversationId === activeConversation?.id && <p role="alert" className="mx-auto w-full max-w-[880px] px-5 md:px-10 pt-3 text-xs text-error">{chatError}</p>}
+        {memoryModeError?.conversationId === activeConversation?.id && memoryModeError && <p role="alert" className="mx-auto w-full max-w-[880px] px-5 md:px-10 pt-3 text-xs text-error">{memoryModeError.message}</p>}
 
         {/* Floating Input */}
         <ChatInput
+          message={draft}
+          onMessageChange={setDraft}
           onSend={handleSendMessage}
-          disabled={isStreaming}
+          disabled={isStreaming || memoryModeSaving}
           models={modelOptions}
           selectedModel={selectedModel}
           onModelChange={setSelectedModel}

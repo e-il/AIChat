@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Brain, X, Plus, Trash2, Pencil, Check } from 'lucide-react';
 import type { Memory, MemoryType } from '../../types';
 import { useMemory } from '../../hooks/useMemory';
+import { Dialog } from '../Common/Dialog';
 
 interface MemoryPanelProps {
   open: boolean;
@@ -41,8 +42,8 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
     const trimmed = newContent.trim();
     if (!trimmed) return;
     setIsAdding(true);
-    await create(newType, trimmed);
-    setNewContent('');
+    const memory = await create(newType, trimmed);
+    if (memory) setNewContent('');
     setIsAdding(false);
   };
 
@@ -60,8 +61,8 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
     if (!editingId) return;
     const trimmed = editingContent.trim();
     if (!trimmed) return;
-    await update(editingId, { content: trimmed });
-    cancelEdit();
+    const memory = await update(editingId, { content: trimmed });
+    if (memory) cancelEdit();
   };
 
   const grouped = TYPE_ORDER.map(type => ({
@@ -70,21 +71,23 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
   }));
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-surface-container-lowest rounded-3xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden">
+    <Dialog open={open} onClose={onClose} label="Memory library" className="max-w-2xl">
+      <div className="bg-surface-container-lowest w-full max-h-[85dvh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="bg-gradient-to-br from-primary to-primary-container px-6 py-5 flex items-center justify-between">
+        <div className="bg-[#272b27] px-6 py-5 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-sm">
               <Brain size={20} className="text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white font-headline">Memory</h2>
+              <h2 className="text-lg font-medium text-white font-headline">Memory library</h2>
               <p className="text-xs text-white/80 font-body">{memories.length} item{memories.length === 1 ? '' : 's'} remembered</p>
             </div>
           </div>
           <button
             onClick={onClose}
+            title="Close memory library"
+            aria-label="Close memory library"
             className="w-9 h-9 flex items-center justify-center text-white/80 hover:bg-white/10 rounded-full transition-colors cursor-pointer"
           >
             <X size={20} />
@@ -93,9 +96,10 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
 
         {/* Add memory form */}
         <div className="px-6 py-4 border-b border-slate-200/60 bg-surface-container-low">
-          <div className="flex gap-2 items-start">
+          <div className="flex flex-wrap gap-2 items-start">
             <select
               value={newType}
+              aria-label="Memory type"
               onChange={(e) => setNewType(e.target.value as MemoryType)}
               className="px-3 py-2 bg-surface-container-high border-2 border-transparent focus:border-primary
                          rounded-lg text-sm font-medium text-on-surface cursor-pointer focus:outline-none"
@@ -107,11 +111,12 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
             </select>
             <input
               type="text"
+              aria-label="New memory"
               value={newContent}
               onChange={(e) => setNewContent(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
               placeholder="Teach me something to remember..."
-              className="flex-1 px-3 py-2 bg-surface-container-high border-2 border-transparent
+              className="min-w-0 flex-1 basis-40 px-3 py-2 bg-surface-container-high border-2 border-transparent
                          focus:border-primary rounded-lg text-sm text-on-surface
                          placeholder-on-surface-variant/60 focus:outline-none"
               disabled={isAdding}
@@ -139,16 +144,13 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
           )}
 
           {error && !isLoading && (
-            <p className="text-center text-error text-sm py-6">{error}</p>
+            <p role="alert" className="text-center text-error text-sm py-6">{error}</p>
           )}
 
           {!isLoading && !error && memories.length === 0 && (
             <div className="text-center py-12">
               <Brain size={40} className="mx-auto text-on-surface-variant/40 mb-3" />
               <p className="text-on-surface-variant text-sm">No memories yet.</p>
-              <p className="text-on-surface-variant/70 text-xs mt-1">
-                Add one above, or they'll appear as the AI learns about you.
-              </p>
             </div>
           )}
 
@@ -164,11 +166,12 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
                   </div>
                   <div className="space-y-2">
                     {items.map(memory => (
-                      <div key={memory.id} className="group bg-surface-container-low rounded-xl px-4 py-3 hover:bg-surface-container transition-colors">
+                      <div key={memory.id} className="group border-b border-outline-variant/20 py-4">
                         {editingId === memory.id ? (
                           <div className="flex gap-2 items-start">
                             <textarea
                               value={editingContent}
+                              aria-label="Edit memory"
                               onChange={(e) => setEditingContent(e.target.value)}
                               className="flex-1 px-3 py-2 bg-surface-container-high border-2 border-primary
                                          rounded-lg text-sm text-on-surface resize-none focus:outline-none"
@@ -178,6 +181,7 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
                             <div className="flex flex-col gap-1">
                               <button
                                 onClick={saveEdit}
+                                title="Save memory"
                                 className="w-8 h-8 flex items-center justify-center bg-primary text-on-primary
                                            rounded-lg hover:bg-primary-dim cursor-pointer"
                               >
@@ -185,6 +189,7 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
                               </button>
                               <button
                                 onClick={cancelEdit}
+                                title="Cancel editing"
                                 className="w-8 h-8 flex items-center justify-center text-on-surface-variant
                                            hover:bg-slate-200/50 rounded-lg cursor-pointer"
                               >
@@ -194,8 +199,8 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
                           </div>
                         ) : (
                           <div className="flex items-start gap-3">
-                            <p className="flex-1 text-sm text-on-surface leading-relaxed">{memory.content}</p>
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <p className="min-w-0 break-words flex-1 text-sm text-on-surface leading-relaxed">{memory.content}</p>
+                            <div className="flex shrink-0 items-center gap-1 lg:opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                               <button
                                 onClick={() => startEdit(memory)}
                                 className="w-8 h-8 flex items-center justify-center text-on-surface-variant
@@ -230,6 +235,6 @@ export function MemoryPanel({ open, onClose }: MemoryPanelProps) {
           )}
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

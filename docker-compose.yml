@@ -14,6 +14,8 @@ services:
       - ./backend/AIChat.Api/config:/app/config
       # Memory files (one JSON per user). Must persist across container rebuilds.
       - aichat-memory:/app/data/memory
+      - aichat-extraction:/app/data/extraction
+      - aichat-pending:/app/data/pending
       # Generated + uploaded images, scoped per user. Must persist across container rebuilds.
       - aichat-images:/app/data/images
     ports:
@@ -33,4 +35,6 @@ services:
 
 volumes:
   aichat-memory:
+  aichat-extraction:
+  aichat-pending:
   aichat-images:

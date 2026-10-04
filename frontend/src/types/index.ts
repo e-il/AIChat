@@ -53,6 +53,7 @@ export interface ModelInfo {
   id: string;
   name: string;
   deploymentName: string;
+  kind?: string;
 }
 
 export interface ModelsResponse {
@@ -62,6 +63,8 @@ export interface ModelsResponse {
   contextSizeOptions: number[];
   defaultMaxMessages: number;
   maxMessagesOptions: number[];
+  isAdmin: boolean;
+  allModels?: ModelInfo[];
 }
 
 export interface PromptProfile {

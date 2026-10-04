@@ -18,6 +18,16 @@ async function handle<T>(response: Response): Promise<T> {
 }
 
 export const memoryApi = {
+  async setConversationMode(conversationId: string, enabled: boolean, lastMessageId?: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}/mode`, {
+      method: 'PUT',
+      headers: getHeaders(true),
+      body: JSON.stringify({ enabled, lastMessageId }),
+    });
+    if (response.status === 401) throw new Error('AUTH_REQUIRED');
+    if (!response.ok) throw new Error('Unable to update conversation memory. Please try again.');
+  },
+
   async list(): Promise<Memory[]> {
     const response = await fetch(API_BASE, { headers: getHeaders() });
     return handle(response);

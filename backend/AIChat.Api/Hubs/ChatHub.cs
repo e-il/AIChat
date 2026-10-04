@@ -1,8 +1,8 @@
 using System.Text;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Options;
 using AIChat.Api.Models;
 using AIChat.Api.Services;
+using Microsoft.Extensions.Options;
 
 namespace AIChat.Api.Hubs;
 
@@ -16,7 +16,7 @@ public class ChatHub : Hub
     private readonly IdleExtractionScheduler _extractionScheduler;
     private readonly IMemorySuppressionPolicy _memorySuppression;
     private readonly IPromptProfileRegistry _promptProfiles;
-    private readonly AzureOpenAISettings _azureOpenAISettings;
+    private readonly IOptionsMonitor<AzureOpenAISettings> _configuration;
     private readonly ILogger<ChatHub> _logger;
 
     public ChatHub(
@@ -26,7 +26,7 @@ public class ChatHub : Hub
         IdleExtractionScheduler extractionScheduler,
         IMemorySuppressionPolicy memorySuppression,
         IPromptProfileRegistry promptProfiles,
-        IOptions<AzureOpenAISettings> azureOpenAISettings,
+        IOptionsMonitor<AzureOpenAISettings> configuration,
         ILogger<ChatHub> logger)
     {
         _openAIService = openAIService;
@@ -35,7 +35,7 @@ public class ChatHub : Hub
         _extractionScheduler = extractionScheduler;
         _memorySuppression = memorySuppression;
         _promptProfiles = promptProfiles;
-        _azureOpenAISettings = azureOpenAISettings.Value;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -126,13 +126,19 @@ public class ChatHub : Hub
                 return;
             }
 
-            var suppressMemory = _memorySuppression.ShouldSuppress(request.PromptProfileId, messages);
+            var suppressMemory = string.Equals(memoryMode, "off", StringComparison.OrdinalIgnoreCase)
+                || _memorySuppression.ShouldSuppress(request.PromptProfileId, messages);
             if (suppressMemory)
             {
+                await _extractionScheduler.CancelAsync(userId, conversationId, lastMessage.Id);
                 _logger.LogInformation(
                     "Memory disabled for conversation {ConversationId}: promptProfileId={PromptProfileId}",
                     conversationId,
                     request.PromptProfileId);
+            }
+            else
+            {
+                await _extractionScheduler.SetMemoryModeAsync(userId, conversationId, true);
             }
 
             // Resolve memory based on mode and inject into system prompt.
@@ -152,8 +158,9 @@ public class ChatHub : Hub
                 }
             }
 
-            var allowImageGen = _azureOpenAISettings.EnableImageGeneration;
-            var allowVideoGen = _azureOpenAISettings.EnableVideoGeneration;
+            var currentSettings = _configuration.CurrentValue;
+            var allowImageGen = currentSettings.EnableImageGeneration;
+            var allowVideoGen = currentSettings.EnableVideoGeneration;
             var generatedMediaThisTurn = false;
             var toolCalls = new List<MessageToolCall>();
             await foreach (var ev in _openAIService.StreamChatCompletionAsync(

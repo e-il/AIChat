@@ -21,11 +21,22 @@ public class ExtractionCheckpointService : IExtractionCheckpointService
     {
         return _store.MutateAsync(userId, all =>
         {
-            all[conversationId] = new ExtractionCheckpoint
-            {
-                LastExtractedMessageId = lastExtractedMessageId,
-                LastExtractedAt = DateTime.UtcNow,
-            };
+            if (!all.TryGetValue(conversationId, out var checkpoint))
+                all[conversationId] = checkpoint = new ExtractionCheckpoint();
+            checkpoint.LastExtractedMessageId = lastExtractedMessageId;
+            checkpoint.LastExtractedAt = DateTime.UtcNow;
+        });
+    }
+
+    public Task SetMemoryModeAsync(string userId, string conversationId, bool enabled, string? lastMessageId)
+    {
+        return _store.MutateAsync(userId, all =>
+        {
+            if (!all.TryGetValue(conversationId, out var checkpoint))
+                all[conversationId] = checkpoint = new ExtractionCheckpoint();
+            checkpoint.MemoryDisabled = !enabled;
+            if (!enabled && !string.IsNullOrWhiteSpace(lastMessageId))
+                checkpoint.SuppressedThroughMessageId = lastMessageId;
         });
     }
 }

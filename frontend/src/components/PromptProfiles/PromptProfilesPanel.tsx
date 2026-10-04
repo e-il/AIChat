@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Lock, Plus, Save, Trash2, X } from 'lucide-react';
 import type { PromptProfile } from '../../types';
 import { DEFAULT_PROMPT_PROFILE_ID } from '../../services/promptProfiles';
+import { Dialog } from '../Common/Dialog';
 
 interface PromptProfilesPanelProps {
   open: boolean;
@@ -97,19 +98,14 @@ export function PromptProfilesPanel({
   };
 
   return (
-    <div className="fixed inset-0 z-[80]">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+    <Dialog open={open} onClose={onClose} label="Prompt profiles" className="dialog-drawer">
       <section
-        className="absolute right-0 top-0 h-full w-full max-w-4xl bg-surface-container-lowest
-                   shadow-2xl flex flex-col"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Prompt profiles"
+        className="h-full w-full bg-surface-container-lowest flex flex-col"
       >
-        <header className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/20">
+        <header className="flex items-center justify-between px-6 py-5 border-b border-outline-variant/20 shrink-0">
           <div>
             <h2 className="font-headline text-lg font-bold text-on-surface">Prompt profiles</h2>
-            <p className="text-xs text-on-surface-variant">Choose a system prompt for each chat or create your own.</p>
+            <p className="text-xs text-on-surface-variant mt-1">{profiles.length} profiles</p>
           </div>
           <button
             onClick={onClose}
@@ -121,11 +117,11 @@ export function PromptProfilesPanel({
           </button>
         </header>
 
-        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[16rem_1fr]">
-          <aside className="border-b md:border-b-0 md:border-r border-outline-variant/20 p-4 overflow-y-auto">
+        <div className="flex-1 min-h-0 grid grid-cols-1 grid-rows-[minmax(120px,180px)_1fr] md:grid-rows-1 md:grid-cols-[14rem_1fr]">
+          <aside className="bg-surface-container-low border-b md:border-b-0 md:border-r border-outline-variant/20 p-4 overflow-y-auto">
             <button
               onClick={handleCreateProfile}
-              className="w-full mb-4 flex items-center justify-center gap-2 rounded-full bg-primary
+              className="w-full mb-4 flex items-center justify-center gap-2 rounded-md bg-primary
                          px-4 py-2.5 text-sm font-semibold text-on-primary transition-colors
                          hover:bg-primary-dim cursor-pointer"
             >
@@ -140,7 +136,7 @@ export function PromptProfilesPanel({
                   <button
                     key={profile.id}
                     onClick={() => handlePickProfile(profile)}
-                    className={`w-full rounded-2xl px-3 py-3 text-left transition-colors cursor-pointer
+                    className={`w-full rounded-md px-3 py-3 text-left transition-colors cursor-pointer
                                 ${isActive ? 'bg-primary/10 text-primary' : 'text-on-surface hover:bg-surface-container'}`}
                   >
                     <span className="flex items-center gap-2 text-sm font-semibold">
@@ -160,8 +156,8 @@ export function PromptProfilesPanel({
 
           <div className="min-h-0 overflow-y-auto p-6 space-y-5">
             {isBuiltIn && (
-              <div className="rounded-2xl bg-primary/10 px-4 py-3 text-sm text-primary">
-                Built-in profiles are managed by AIChat. Create a new profile to write a custom system prompt.
+              <div className="border-l-2 border-secondary pl-3 py-1 text-xs text-secondary flex items-center gap-2">
+                <Lock size={13} />Built-in profile
               </div>
             )}
 
@@ -221,7 +217,7 @@ export function PromptProfilesPanel({
 
             {isExistingProfile && (
               <button
-                onClick={() => onSelectProfile(draft.id)}
+                onClick={() => { onSelectProfile(draft.id); onClose(); }}
                 className="rounded-full bg-primary/10 px-4 py-2.5 text-sm font-semibold text-primary
                            transition-colors hover:bg-primary/15 cursor-pointer"
               >
@@ -255,6 +251,6 @@ export function PromptProfilesPanel({
           </div>
         </div>
       </section>
-    </div>
+    </Dialog>
   );
 }

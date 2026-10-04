@@ -7,4 +7,5 @@ public interface IUserIdentityService
     /// Returns null if the code is not recognized.
     /// </summary>
     string? ResolveUserId(string? authCode);
+    bool IsAdmin(string? userId);
 }

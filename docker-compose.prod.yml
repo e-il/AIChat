@@ -1,6 +1,6 @@
 services:
   traefik:
-    image: traefik:v3.0
+    image: traefik:v3.6
     container_name: traefik
     command:
       - "--api.insecure=false"
@@ -33,11 +33,12 @@ services:
       - AzureOpenAI__Endpoint=${AZURE_OPENAI_ENDPOINT}
       - AzureOpenAI__ApiKey=${AZURE_OPENAI_API_KEY}
     volumes:
-      # Named volume: first run populates from image's /app/config; edits persist.
-      # Reset to image defaults with: docker compose down -v
-      - aichat-config:/app/config
-      # Memory files (one JSON per user). Must persist across container rebuilds.
+      - ./config:/app/config
+      - ./logs:/app/logs
       - aichat-memory:/app/data/memory
+      - aichat-extraction:/app/data/extraction
+      - aichat-pending:/app/data/pending
+      - aichat-images:/app/data/images
     expose:
       - "5000"
     restart: unless-stopped
@@ -59,5 +60,7 @@ services:
 
 volumes:
   letsencrypt:
-  aichat-config:
+  aichat-images:
   aichat-memory:
+  aichat-extraction:
+  aichat-pending:

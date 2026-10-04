@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { Message, MessageAttachment } from '../../types';
 import { MessageBubble, StreamingBubble } from './MessageBubble';
 import { TypingIndicator } from './TypingIndicator';
-import { MessageSquare, Sparkles, Code, FileText } from 'lucide-react';
+import { ArrowUpRight, Code2, PencilLine, Compass } from 'lucide-react';
 
 interface ChatAreaProps {
   messages: Message[];
@@ -11,9 +11,10 @@ interface ChatAreaProps {
   toolStatus: string | null;
   isStreaming: boolean;
   isLoading: boolean;
+  onSuggestion: (message: string) => void;
 }
 
-export function ChatArea({ messages, streamingContent, streamingAttachments, toolStatus, isStreaming, isLoading }: ChatAreaProps) {
+export function ChatArea({ messages, streamingContent, streamingAttachments, toolStatus, isStreaming, isLoading, onSuggestion }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -33,49 +34,20 @@ export function ChatArea({ messages, streamingContent, streamingAttachments, too
 
   if (messages.length === 0 && !isStreaming) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center px-8 bg-surface">
-        {/* Hero Section */}
-        <div className="w-16 h-16 bg-gradient-to-br from-primary to-primary-container rounded-2xl 
-                        flex items-center justify-center mb-6 shadow-lg shadow-primary/20">
-          <Sparkles size={32} className="text-white" />
-        </div>
-        <h1 className="text-2xl font-bold text-on-surface mb-2 font-headline">
-          Welcome to AIChat
-        </h1>
-        <p className="text-on-surface-variant text-center max-w-md mb-10 text-sm font-body">
-          Start a conversation with AI. Ask questions, get help with coding, writing, analysis, and more.
-        </p>
-        
-        {/* Capability Cards - Bento Style */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-3xl w-full">
-          <div className="p-5 bg-surface-container-high rounded-2xl 
-                          hover:bg-surface-container-highest transition-colors cursor-pointer group">
-            <div className="w-10 h-10 bg-primary rounded-xl 
-                            flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
-              <MessageSquare size={20} className="text-white" />
-            </div>
-            <h3 className="font-semibold text-on-surface text-sm mb-1 font-headline">Natural Conversations</h3>
-            <p className="text-xs text-on-surface-variant font-body">Chat naturally and get helpful, contextual responses.</p>
-          </div>
-          
-          <div className="p-5 bg-surface-container-high rounded-2xl 
-                          hover:bg-surface-container-highest transition-colors cursor-pointer group">
-            <div className="w-10 h-10 bg-tertiary rounded-xl 
-                            flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
-              <Code size={20} className="text-white" />
-            </div>
-            <h3 className="font-semibold text-on-surface text-sm mb-1 font-headline">Code Assistance</h3>
-            <p className="text-xs text-on-surface-variant font-body">Get help writing, debugging, and explaining code.</p>
-          </div>
-          
-          <div className="p-5 bg-surface-container-high rounded-2xl 
-                          hover:bg-surface-container-highest transition-colors cursor-pointer group">
-            <div className="w-10 h-10 bg-secondary rounded-xl 
-                            flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
-              <FileText size={20} className="text-white" />
-            </div>
-            <h3 className="font-semibold text-on-surface text-sm mb-1 font-headline">Content Creation</h3>
-            <p className="text-xs text-on-surface-variant font-body">Draft documents, emails, and creative content.</p>
+      <div className="welcome-area flex-1 min-h-0 overflow-y-auto flex px-6 md:px-12">
+        <div className="w-full max-w-[760px] m-auto py-8 welcome-content">
+          <div className="flex items-center gap-3 mb-7 text-xs text-on-surface-variant"><span className="w-8 h-px bg-primary" />A FRESH CONVERSATION</div>
+          <h1 className="font-headline text-[36px] md:text-[48px] font-medium leading-[1.12] text-on-surface">A little curiosity.<br /><span className="text-primary">A new perspective.</span></h1>
+          <div className="mt-10 md:mt-12 border-t border-outline-variant/30">
+            {[
+              { icon: Compass, label: 'Explore an idea', prompt: 'Help me explore a new idea. Start by asking what I have in mind.', number: '01' },
+              { icon: Code2, label: 'Work through a coding problem', prompt: 'Help me work through a coding problem. Ask me about the code and what I want to achieve.', number: '02' },
+              { icon: PencilLine, label: 'Find the right words', prompt: 'Help me draft a clear, thoughtful message. Ask who it is for and what I want to say.', number: '03' },
+            ].map(({ icon: Icon, label, prompt, number }) => (
+              <button key={number} onClick={() => onSuggestion(prompt)} className="suggestion-row group flex items-center gap-4 w-full text-left py-4 border-b border-outline-variant/30 hover:text-primary">
+                <span className="font-mono text-[10px] text-on-surface-variant/60">{number}</span><Icon size={18} className="text-secondary shrink-0" /><span className="text-sm flex-1">{label}</span><ArrowUpRight size={17} className="text-on-surface-variant group-hover:text-primary" />
+              </button>
+            ))}
           </div>
         </div>
       </div>
@@ -83,8 +55,8 @@ export function ChatArea({ messages, streamingContent, streamingAttachments, too
   }
 
   return (
-    <div className="flex-1 overflow-y-auto bg-surface">
-      <div className="max-w-5xl mx-auto px-6 md:px-12 py-8 space-y-10">
+    <div className="flex-1 min-h-0 overflow-y-auto bg-surface">
+      <div className="max-w-[880px] mx-auto px-5 md:px-10 py-8 space-y-8">
         {messages.map(message => (
           <MessageBubble key={message.id} message={message} />
         ))}

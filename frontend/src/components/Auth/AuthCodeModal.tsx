@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Key, AlertCircle, Bot } from 'lucide-react';
+import { Key, AlertCircle, ArrowRight } from 'lucide-react';
+import { Dialog } from '../Common/Dialog';
 
 interface AuthCodeModalProps {
   onSubmit: (code: string) => Promise<boolean>;
@@ -33,21 +34,19 @@ export function AuthCodeModal({ onSubmit }: AuthCodeModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-surface-container-lowest rounded-3xl shadow-2xl max-w-md w-full overflow-hidden">
+    <Dialog open label="Sign in to AIChat" className="max-w-[420px]">
+      <div className="bg-surface-container-lowest w-full overflow-hidden">
         {/* Header - Ethereal Gradient */}
-        <div className="bg-gradient-to-br from-primary to-primary-container px-6 py-8 flex flex-col items-center gap-4 text-center">
-          <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm">
-            <Bot size={32} className="text-white" />
-          </div>
+        <div className="bg-[#272b27] px-8 py-8 flex flex-col items-start gap-6">
+          <img src="/favicon.svg" alt="" className="w-10 h-10" />
           <div>
-            <h2 className="text-xl font-bold text-white font-headline">Welcome to AIChat</h2>
-            <p className="text-sm text-white/80 mt-1 font-body">Enter your access code to continue</p>
+            <h2 className="text-3xl font-medium text-white font-headline">AIChat<span className="text-[#ef846e]">.</span></h2>
+            <p className="text-sm text-white/60 mt-2 font-body">Your personal workspace</p>
           </div>
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6">
+        <form onSubmit={handleSubmit} className="p-8">
           <div className="mb-5">
             <label htmlFor="authCode" className="block text-sm font-semibold text-on-surface mb-2 font-body">
               Authentication Code
@@ -72,7 +71,7 @@ export function AuthCodeModal({ onSubmit }: AuthCodeModalProps) {
           </div>
 
           {error && (
-            <div className="mb-5 flex items-center gap-2 text-error text-sm bg-error/10 px-4 py-3 rounded-xl">
+            <div role="alert" className="mb-5 flex items-center gap-2 text-error text-sm bg-error/10 px-4 py-3 rounded-md">
               <AlertCircle size={16} />
               <span className="font-medium">{error}</span>
             </div>
@@ -82,14 +81,13 @@ export function AuthCodeModal({ onSubmit }: AuthCodeModalProps) {
             type="submit"
             disabled={isLoading}
             className="w-full py-3 bg-primary hover:bg-primary-dim text-on-primary font-semibold
-                       text-sm rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed
-                       cursor-pointer shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30
-                       active:scale-[0.98]"
+                       text-sm rounded-md flex items-center justify-center gap-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? 'Verifying...' : 'Continue'}
+            {!isLoading && <ArrowRight size={16} />}
           </button>
         </form>
       </div>
-    </div>
+    </Dialog>
   );
 }

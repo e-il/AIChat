@@ -24,11 +24,11 @@ public class PromptProfileRegistry : IPromptProfileRegistry
     private const string DefaultGeneralSystemPrompt =
         "You are a helpful AI assistant. Be concise and helpful in your responses.";
 
-    private readonly PromptProfileSettings _settings;
+    private readonly IOptions<PromptProfileSettings> _configuration;
 
-    public PromptProfileRegistry(IOptions<PromptProfileSettings> settings)
+    public PromptProfileRegistry(IOptions<PromptProfileSettings> configuration)
     {
-        _settings = settings.Value;
+        _configuration = configuration;
     }
 
     public int MaxCustomSystemPromptLength =>
@@ -95,7 +95,7 @@ public class PromptProfileRegistry : IPromptProfileRegistry
     }
 
     private PromptProfileSettings CurrentSettings =>
-        _settings;
+        _configuration.Value;
 
     private static PromptProfile NormalizeBuiltIn(PromptProfile profile)
     {

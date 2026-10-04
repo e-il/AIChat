@@ -10,10 +10,14 @@ public class ModelInfo
     public string Kind { get; set; } = "chat";
 }
 
-public class AzureOpenAISettings
+public class AzureOpenAISettings : ModelCatalogSettings
 {
     public string Endpoint { get; set; } = "";
     public string ApiKey { get; set; } = "";
+}
+
+public class ModelCatalogSettings
+{
     public List<ModelInfo> Models { get; set; } = new();
     public string DefaultModel { get; set; } = "gpt-4o";
     public int DefaultContextSize { get; set; } = 100000;

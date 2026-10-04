@@ -1,8 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using System.Net.Http.Headers;
-using Microsoft.Extensions.Options;
 using AIChat.Api.Models;
+using Microsoft.Extensions.Options;
 
 namespace AIChat.Api.Services;
 
@@ -10,16 +10,16 @@ public class AzureOpenAIVideoGenerationService : IVideoGenerationService
 {
     private const string HttpClientName = "azure-openai-video-generation";
 
-    private readonly AzureOpenAISettings _settings;
+    private readonly IOptions<AzureOpenAISettings> _configuration;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AzureOpenAIVideoGenerationService> _logger;
 
     public AzureOpenAIVideoGenerationService(
-        IOptions<AzureOpenAISettings> settings,
+        IOptions<AzureOpenAISettings> configuration,
         IHttpClientFactory httpClientFactory,
         ILogger<AzureOpenAIVideoGenerationService> logger)
     {
-        _settings = settings.Value;
+        _configuration = configuration;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
@@ -107,13 +107,13 @@ public class AzureOpenAIVideoGenerationService : IVideoGenerationService
     private HttpRequestMessage CreateVideoRequest(HttpMethod method, string url)
     {
         var request = new HttpRequestMessage(method, url);
-        request.Headers.Add("api-key", _settings.ApiKey);
+        request.Headers.Add("api-key", _configuration.Value.ApiKey);
         return request;
     }
 
     private string BuildVideoApiUrl(string path, string? query = null)
     {
-        var url = $"{_settings.Endpoint.TrimEnd('/')}/openai/v1/{path.TrimStart('/')}";
+        var url = $"{_configuration.Value.Endpoint.TrimEnd('/')}/openai/v1/{path.TrimStart('/')}";
         return string.IsNullOrWhiteSpace(query) ? url : $"{url}?{query}";
     }
 

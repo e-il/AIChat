@@ -28,7 +28,8 @@ public class AzureOpenAIService : IAzureOpenAIService
     private readonly Lazy<EmbeddingClient?> _embeddingClient;
     private readonly Lazy<ImageClient?> _imageClient;
     private readonly Lazy<ModelInfo?> _videoGenerationModel;
-    private readonly AzureOpenAISettings _settings;
+    private readonly IOptionsMonitor<AzureOpenAISettings> _configuration;
+    private AzureOpenAISettings Settings => _configuration.CurrentValue;
     private readonly MemorySettings _memorySettings;
     private readonly IMediaStorageService _mediaStorage;
     private readonly IVideoGenerationService _videoGeneration;
@@ -36,7 +37,7 @@ public class AzureOpenAIService : IAzureOpenAIService
     private readonly ILogger<AzureOpenAIService> _logger;
 
     public AzureOpenAIService(
-        IOptions<AzureOpenAISettings> settings,
+        IOptionsMonitor<AzureOpenAISettings> configuration,
         IOptions<MemorySettings> memorySettings,
         IMediaStorageService mediaStorage,
         IVideoGenerationService videoGeneration,
@@ -47,15 +48,16 @@ public class AzureOpenAIService : IAzureOpenAIService
         _mediaStorage = mediaStorage;
         _videoGeneration = videoGeneration;
         _httpClientFactory = httpClientFactory;
-        _settings = settings.Value;
+        _configuration = configuration;
+        var initialSettings = configuration.CurrentValue;
         _memorySettings = memorySettings.Value;
 
-        if (string.IsNullOrEmpty(_settings.Endpoint) || string.IsNullOrEmpty(_settings.ApiKey))
+        if (string.IsNullOrEmpty(initialSettings.Endpoint) || string.IsNullOrEmpty(initialSettings.ApiKey))
         {
-            throw new InvalidOperationException("AzureOpenAI:Endpoint and ApiKey must be configured (via config/azure-openai.json or environment variables)");
+            throw new InvalidOperationException("Azure OpenAI endpoint and API key must be configured via environment variables");
         }
 
-        _client = new AzureOpenAIClient(new Uri(_settings.Endpoint), new ApiKeyCredential(_settings.ApiKey));
+        _client = new AzureOpenAIClient(new Uri(initialSettings.Endpoint), new ApiKeyCredential(initialSettings.ApiKey));
 
         _embeddingClient = new Lazy<EmbeddingClient?>(() =>
             string.IsNullOrWhiteSpace(_memorySettings.EmbeddingDeploymentName)
@@ -64,11 +66,11 @@ public class AzureOpenAIService : IAzureOpenAIService
 
         _imageClient = new Lazy<ImageClient?>(() =>
         {
-            if (string.IsNullOrWhiteSpace(_settings.ImageGenerationModelId)) return null;
-            var model = _settings.Models.FirstOrDefault(m => m.Id == _settings.ImageGenerationModelId);
+            if (string.IsNullOrWhiteSpace(Settings.ImageGenerationModelId)) return null;
+            var model = Settings.Models.FirstOrDefault(m => m.Id == Settings.ImageGenerationModelId);
             if (model is null)
             {
-                _logger.LogWarning("ImageGenerationModelId={Id} not found in Models[]", _settings.ImageGenerationModelId);
+                _logger.LogWarning("ImageGenerationModelId={Id} not found in Models[]", Settings.ImageGenerationModelId);
                 return null;
             }
             return _client.GetImageClient(model.DeploymentName);
@@ -76,11 +78,11 @@ public class AzureOpenAIService : IAzureOpenAIService
 
         _videoGenerationModel = new Lazy<ModelInfo?>(() =>
         {
-            if (string.IsNullOrWhiteSpace(_settings.VideoGenerationModelId)) return null;
-            var model = _settings.Models.FirstOrDefault(m => m.Id == _settings.VideoGenerationModelId);
+            if (string.IsNullOrWhiteSpace(Settings.VideoGenerationModelId)) return null;
+            var model = Settings.Models.FirstOrDefault(m => m.Id == Settings.VideoGenerationModelId);
             if (model is null)
             {
-                _logger.LogWarning("VideoGenerationModelId={Id} not found in Models[]", _settings.VideoGenerationModelId);
+                _logger.LogWarning("VideoGenerationModelId={Id} not found in Models[]", Settings.VideoGenerationModelId);
                 return null;
             }
             return model;
@@ -88,30 +90,30 @@ public class AzureOpenAIService : IAzureOpenAIService
     }
 
     public bool IsImageGenerationAvailable =>
-        _settings.EnableImageGeneration && _imageClient.Value is not null;
+        Settings.EnableImageGeneration && _imageClient.Value is not null;
 
     public bool IsVideoGenerationAvailable =>
-        _settings.EnableVideoGeneration && _videoGenerationModel.Value is not null;
+        Settings.EnableVideoGeneration && _videoGenerationModel.Value is not null;
 
-    public List<ModelInfo> GetAvailableModels() => _settings.Models;
+    public List<ModelInfo> GetAvailableModels() => Settings.Models.ToList();
 
-    public string GetDefaultModel() => _settings.DefaultModel;
+    public string GetDefaultModel() => Settings.DefaultModel;
 
-    public int GetDefaultContextSize() => _settings.DefaultContextSize;
+    public int GetDefaultContextSize() => Settings.DefaultContextSize;
 
-    public List<int> GetContextSizeOptions() => _settings.ContextSizeOptions;
+    public List<int> GetContextSizeOptions() => Settings.ContextSizeOptions.ToList();
 
-    public int GetDefaultMaxMessages() => _settings.DefaultMaxMessages;
+    public int GetDefaultMaxMessages() => Settings.DefaultMaxMessages;
 
-    public List<int> GetMaxMessagesOptions() => _settings.MaxMessagesOptions;
+    public List<int> GetMaxMessagesOptions() => Settings.MaxMessagesOptions.ToList();
 
     private ChatClient GetChatClient(string modelId)
     {
         return _chatClients.GetOrAdd(modelId, id =>
         {
-            var model = _settings.Models.FirstOrDefault(m => m.Id == id)
-                ?? _settings.Models.FirstOrDefault(m => m.Id == _settings.DefaultModel)
-                ?? _settings.Models.First();
+            var model = Settings.Models.FirstOrDefault(m => m.Id == id)
+                ?? Settings.Models.FirstOrDefault(m => m.Id == Settings.DefaultModel)
+                ?? Settings.Models.First();
 
             return _client.GetChatClient(model.DeploymentName);
         });
@@ -821,15 +823,12 @@ public class AzureOpenAIService : IAzureOpenAIService
         List<Memory> existingMemories,
         CancellationToken cancellationToken = default)
     {
-        var chatClient = GetChatClient(_settings.DefaultModel);
+        var chatClient = GetChatClient(Settings.DefaultModel);
         var promptMessages = BuildExtractionPrompt(messages, existingMemories);
 
         var options = new ChatCompletionOptions
         {
             ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
-            // Deterministic, conservative extraction: low temperature keeps the model
-            // from inventing speculative or marginal "memories" and makes results reproducible.
-            Temperature = 0f,
         };
 
         ClientResult<ChatCompletion> result;
@@ -866,7 +865,7 @@ public class AzureOpenAIService : IAzureOpenAIService
     {
         var client = _imageClient.Value
             ?? throw new InvalidOperationException("Image generation is not configured");
-        if (!_settings.EnableImageGeneration)
+        if (!Settings.EnableImageGeneration)
         {
             throw new InvalidOperationException("Image generation is disabled");
         }
@@ -929,7 +928,7 @@ public class AzureOpenAIService : IAzureOpenAIService
     {
         var model = GetImageGenerationModel()
             ?? throw new InvalidOperationException("Image editing is not configured");
-        if (!_settings.EnableImageGeneration)
+        if (!Settings.EnableImageGeneration)
         {
             throw new InvalidOperationException("Image generation is disabled");
         }
@@ -984,7 +983,7 @@ public class AzureOpenAIService : IAzureOpenAIService
         CancellationToken cancellationToken)
     {
         var http = _httpClientFactory.CreateClient(ImageFetchHttpClient);
-        var url = $"{_settings.Endpoint.TrimEnd('/')}/openai/deployments/{Uri.EscapeDataString(deploymentName)}/images/edits?api-version={ImageEditApiVersion}";
+        var url = $"{Settings.Endpoint.TrimEnd('/')}/openai/deployments/{Uri.EscapeDataString(deploymentName)}/images/edits?api-version={ImageEditApiVersion}";
         var startedAt = DateTime.UtcNow;
         try
         {
@@ -1013,7 +1012,7 @@ public class AzureOpenAIService : IAzureOpenAIService
         string size)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, url);
-        request.Headers.Add("api-key", _settings.ApiKey);
+        request.Headers.Add("api-key", Settings.ApiKey);
 
         var form = new MultipartFormDataContent();
         form.Add(new StringContent(prompt), "prompt");
@@ -1046,9 +1045,9 @@ public class AzureOpenAIService : IAzureOpenAIService
     }
 
     private ModelInfo? GetImageGenerationModel() =>
-        string.IsNullOrWhiteSpace(_settings.ImageGenerationModelId)
+        string.IsNullOrWhiteSpace(Settings.ImageGenerationModelId)
             ? null
-            : _settings.Models.FirstOrDefault(m => m.Id == _settings.ImageGenerationModelId);
+            : Settings.Models.FirstOrDefault(m => m.Id == Settings.ImageGenerationModelId);
 
     private static bool IsSupportedImageEditMimeType(string mimeType) =>
         string.Equals(mimeType, "image/png", StringComparison.OrdinalIgnoreCase)
@@ -1093,7 +1092,7 @@ public class AzureOpenAIService : IAzureOpenAIService
     {
         var model = _videoGenerationModel.Value
             ?? throw new InvalidOperationException("Video generation is not configured");
-        if (!_settings.EnableVideoGeneration)
+        if (!Settings.EnableVideoGeneration)
         {
             throw new InvalidOperationException("Video generation is disabled");
         }

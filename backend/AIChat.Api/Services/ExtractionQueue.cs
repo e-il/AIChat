@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Threading.Channels;
 using AIChat.Api.Models;
 
@@ -10,6 +9,7 @@ public class ExtractionJob
     public required string ConversationId { get; init; }
     public required List<ChatMessage> Messages { get; init; }
     public required string LastMessageId { get; init; }
+    internal CancellationTokenSource Cancellation { get; } = new();
 }
 
 // Producer-only surface. Injected into ChatHub so callers can enqueue but not
@@ -20,6 +20,7 @@ public interface IExtractionQueue
     /// Enqueue a job. Returns false if the conversation is already queued or in progress.
     /// </summary>
     bool TryEnqueue(ExtractionJob job);
+    void Cancel(string userId, string conversationId);
 }
 
 // Consumer members (Reader / Release) are internal so producers don't see them.
@@ -33,39 +34,47 @@ public class ExtractionQueue : IExtractionQueue
     private static readonly TimeSpan StaleLeaseTimeout = TimeSpan.FromMinutes(5);
 
     private readonly Channel<ExtractionJob> _channel = Channel.CreateUnbounded<ExtractionJob>();
-    private readonly ConcurrentDictionary<string, DateTime> _pending = new();
+    private readonly object _gate = new();
+    private readonly Dictionary<(string UserId, string ConversationId), (ExtractionJob Job, DateTime AcquiredAt)> _pending = new();
 
     public bool TryEnqueue(ExtractionJob job)
     {
-        var now = DateTime.UtcNow;
-
-        // Fast path: no existing lease.
-        if (_pending.TryAdd(job.ConversationId, now))
+        lock (_gate)
         {
-            return TryWriteOrRollback(job, now);
+            var key = (job.UserId, job.ConversationId);
+            if (_pending.TryGetValue(key, out var existing))
+            {
+                if (DateTime.UtcNow - existing.AcquiredAt < StaleLeaseTimeout)
+                {
+                    job.Cancellation.Dispose();
+                    return false;
+                }
+                existing.Job.Cancellation.Cancel();
+            }
+            _pending[key] = (job, DateTime.UtcNow);
+            if (_channel.Writer.TryWrite(job)) return true;
+            _pending.Remove(key);
+            job.Cancellation.Dispose();
+            return false;
         }
-
-        // Existing lease: take over only if it's stale.
-        if (_pending.TryGetValue(job.ConversationId, out var acquiredAt)
-            && now - acquiredAt >= StaleLeaseTimeout
-            && _pending.TryUpdate(job.ConversationId, now, acquiredAt))
-        {
-            return TryWriteOrRollback(job, now);
-        }
-
-        return false;
     }
 
-    private bool TryWriteOrRollback(ExtractionJob job, DateTime now)
+    public void Cancel(string userId, string conversationId)
     {
-        if (_channel.Writer.TryWrite(job)) return true;
-
-        // Only clear our own lease (don't stomp a newer one from a concurrent caller).
-        ((ICollection<KeyValuePair<string, DateTime>>)_pending)
-            .Remove(new KeyValuePair<string, DateTime>(job.ConversationId, now));
-        return false;
+        lock (_gate)
+        {
+            if (_pending.Remove((userId, conversationId), out var lease)) lease.Job.Cancellation.Cancel();
+        }
     }
 
     internal ChannelReader<ExtractionJob> Reader => _channel.Reader;
-    internal void Release(string conversationId) => _pending.TryRemove(conversationId, out _);
+    internal void Release(ExtractionJob job)
+    {
+        lock (_gate)
+        {
+            var key = (job.UserId, job.ConversationId);
+            if (_pending.TryGetValue(key, out var lease) && ReferenceEquals(lease.Job, job)) _pending.Remove(key);
+            job.Cancellation.Dispose();
+        }
+    }
 }

@@ -30,6 +30,19 @@ export const chatApi = {
     return handleResponse(response);
   },
 
+  async saveModel(model: { id: string; name: string; deploymentName: string; kind?: string }): Promise<void> {
+    const response = await fetch(`${API_BASE}/models`, {
+      method: 'PUT', headers: { ...getHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(model),
+    });
+    return handleResponse(response).then(() => undefined);
+  },
+
+  async deleteModel(id: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/models/${encodeURIComponent(id)}`, { method: 'DELETE', headers: getHeaders() });
+    if (response.status === 401) throw new Error('AUTH_REQUIRED');
+    if (!response.ok) throw new Error(`Request failed: ${response.statusText}`);
+  },
+
   async getPromptProfiles(): Promise<PromptProfilesResponse> {
     const response = await fetch(`${API_BASE}/promptprofiles`, {
       headers: getHeaders(),
